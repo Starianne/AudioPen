@@ -48,3 +48,16 @@ h1 {
     1px 1px #fff, -1px -1px #fff, 1px -1px #fff, -1px 1px #fff;
     font-family:Verdana, Geneva, Tahoma, sans-serif;
 }
+
+h2 {
+    text-decoration: underline wavy;
+    padding: 5px;
+}
+
+.intro {
+    padding: 5px;
+}
+
+h3 {
+    padding: 5px;
+}
