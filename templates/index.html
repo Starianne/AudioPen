@@ -7,6 +7,7 @@
     <meta name="description" content="Audio">
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="StyleSheet1.css" />
+    <script src="./static/index.js" defer></script>
 </head>
 <body>
     <div class="banner">
@@ -29,13 +30,20 @@
     </div>
     <!--Used to insert a database into the system-->
     <div id="photobooth">
-        <h3>Here's a little demo:</h3>
-        <video id="video" autoplay playsinline></video>
-        <button id="onBtn">Camera On</button>
-        <button id="cameraBtn">Take a photo!</button>
-        <canvas id="canvas"></canvas>
-        <img src="imgs/placeholder.svg" id="photo" alt="Your photo will show up here" />
-        <button id="downloadBtn">Download your photo!</button>
+            <h3>Here's a little demo:</h3>
+            <video id="video" autoplay playsinline></video>
+            <button id="onBtn">Camera On</button>
+            <button id="cameraBtn">Take a photo!</button>
+            <canvas id="canvas"></canvas>
+            <img src="imgs/placeholder.svg" id="photo" alt="Your photo will show up here"/>
+
+            <button id="generateMusicBtn" disabled>
+                Generate Music 🎵
+            </button>
+
+            <button id="stopMusicBtn">
+                Stop Music ⏹
+            </button>
     </div>
 
     <div>
