@@ -17,6 +17,10 @@ canvas {
     font-weight: normal;
     font-style: normal;
 }
+.comment {
+    display:block;
+    text-align: right;
+}
 
 .container {
     display: flex;

@@ -24,22 +24,80 @@ let animationId = null;
 
 // MUSICAL SETTINGS
 
-// SCALES (all in C). Each list is the semitone steps above the root note.
-// The key is the <option value> used in the page; label is the text shown.
+// SCALES (all in C). Each scale has:
+//   label       : text shown in the page
+//   notes       : semitone steps above the root note
+//   instruments : the instruments used with this scale, ordered LOW to HIGH register.
+//                 Every note in a chord gets a different one of these.
+// The key is the <option value> used in the page.
+// Any smplr Soundfont name works. Bowed strings and winds hold long notes well;
+// percussive ones (piano, vibraphone, guitar) die away while a note is held.
 const SCALES = {
-    majorPentatonic: { label: 'Major pentatonic',  notes: [0, 2, 4, 7, 9] },
-    minorPentatonic: { label: 'Minor pentatonic',  notes: [0, 3, 5, 7, 10] },
-    major:           { label: 'Major',             notes: [0, 2, 4, 5, 7, 9, 11] },
-    naturalMinor:    { label: 'Natural minor',     notes: [0, 2, 3, 5, 7, 8, 10] },
-    harmonicMinor:   { label: 'Harmonic minor',    notes: [0, 2, 3, 5, 7, 8, 11] },
-    dorian:          { label: 'Dorian',            notes: [0, 2, 3, 5, 7, 9, 10] },
-    phrygian:        { label: 'Phrygian',          notes: [0, 1, 3, 5, 7, 8, 10] },
-    lydian:          { label: 'Lydian',            notes: [0, 2, 4, 6, 7, 9, 11] },
-    mixolydian:      { label: 'Mixolydian',        notes: [0, 2, 4, 5, 7, 9, 10] },
-    blues:           { label: 'Blues',             notes: [0, 3, 5, 6, 7, 10] },
-    wholeTone:       { label: 'Whole tone',        notes: [0, 2, 4, 6, 8, 10] },
-    hirajoshi:       { label: 'Hirajoshi (Japanese)', notes: [0, 2, 3, 7, 8] },
-    chromatic:       { label: 'Chromatic',         notes: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] }
+    majorPentatonic: {
+        label: 'Major pentatonic',
+        notes: [0, 2, 4, 7, 9],
+        instruments: ['cello', 'clarinet', 'violin', 'flute']
+    },
+    minorPentatonic: {
+        label: 'Minor pentatonic',
+        notes: [0, 3, 5, 7, 10],
+        instruments: ['bassoon', 'english_horn', 'oboe', 'flute']
+    },
+    major: {
+        label: 'Major',
+        notes: [0, 2, 4, 5, 7, 9, 11],
+        instruments: ['contrabass', 'french_horn', 'violin', 'flute']
+    },
+    naturalMinor: {
+        label: 'Natural minor',
+        notes: [0, 2, 3, 5, 7, 8, 10],
+        instruments: ['cello', 'viola', 'english_horn', 'oboe']
+    },
+    harmonicMinor: {
+        label: 'Harmonic minor',
+        notes: [0, 2, 3, 5, 7, 8, 11],
+        instruments: ['contrabass', 'bassoon', 'violin', 'piccolo']
+    },
+    dorian: {
+        label: 'Dorian',
+        notes: [0, 2, 3, 5, 7, 9, 10],
+        instruments: ['cello', 'acoustic_guitar_nylon', 'clarinet', 'flute']
+    },
+    phrygian: {
+        label: 'Phrygian',
+        notes: [0, 1, 3, 5, 7, 8, 10],
+        instruments: ['contrabass', 'trombone', 'english_horn', 'oboe']
+    },
+    lydian: {
+        label: 'Lydian',
+        notes: [0, 2, 4, 6, 7, 9, 11],
+        instruments: ['cello', 'vibraphone', 'celesta', 'glockenspiel']
+    },
+    mixolydian: {
+        label: 'Mixolydian',
+        notes: [0, 2, 4, 5, 7, 9, 10],
+        instruments: ['acoustic_bass', 'acoustic_guitar_steel', 'harmonica', 'whistle']
+    },
+    blues: {
+        label: 'Blues',
+        notes: [0, 3, 5, 6, 7, 10],
+        instruments: ['acoustic_bass', 'electric_guitar_clean', 'harmonica', 'alto_sax']
+    },
+    wholeTone: {
+        label: 'Whole tone',
+        notes: [0, 2, 4, 6, 8, 10],
+        instruments: ['cello', 'orchestral_harp', 'celesta', 'music_box']
+    },
+    hirajoshi: {
+        label: 'Hirajoshi (Japanese)',
+        notes: [0, 2, 3, 7, 8],
+        instruments: ['koto', 'shamisen', 'shakuhachi', 'pan_flute']
+    },
+    chromatic: {
+        label: 'Chromatic',
+        notes: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+        instruments: ['contrabass', 'cello', 'violin', 'flute']
+    }
 };
 
 const DEFAULT_SCALE = 'majorPentatonic';
@@ -57,26 +115,141 @@ if (scaleSelect && scaleSelect.options.length === 0) {
     scaleSelect.value = DEFAULT_SCALE;
 }
 
-// The notes of the scale currently in use (read from the page when Generate is pressed)
-let currentScale = SCALES[DEFAULT_SCALE].notes;
+// Colours used to draw each instrument's cells on the image, from the
+// lowest-register instrument to the highest (r, g, b)
+const VOICE_COLOURS = ['255, 112, 67', '255, 202, 40', '102, 187, 106', '66, 165, 245'];
 
-function getSelectedScale() {
-    const key = scaleSelect ? scaleSelect.value : DEFAULT_SCALE;
+// Used if an instrument can't be loaded (e.g. a name that doesn't exist)
+const FALLBACK_INSTRUMENT = 'acoustic_grand_piano';
 
-    return (SCALES[key] || SCALES[DEFAULT_SCALE]).notes;
+// SOUND QUALITY SETTINGS
+const KIT = 'MusyngKite';      // smplr's higher-quality sample set ('FluidR3_GM' is smaller but rougher)
+const USE_LOOP_DATA = true;    // lets sustained instruments hold notes as long as needed instead of
+                               // the sample simply ending (experimental in smplr; set false if you hear clicks)
+const FADE_OUT_TIME = 1.5;     // seconds an instrument takes to fade away once its edge ends (the image goes black there)
+const REVERB_MIX = 0.3;        // 0 = dry, higher = more room
+const REVERB_SECONDS = 2.5;    // length of the reverb tail
+const VOICE_PANS = [-0.6, -0.2, 0.2, 0.6];  // stereo position of each voice, lowest to highest
+const HUMANIZE_TIME = 0.012;   // random timing wobble per note (seconds), stops it sounding mechanical
+const HUMANIZE_VELOCITY = 6;   // random loudness wobble per note (MIDI velocity)
+
+// Instruments whose notes naturally die away. They must NOT be looped, or they
+// would ring forever like an organ.
+const PERCUSSIVE = new Set([
+    'acoustic_guitar_nylon', 'acoustic_guitar_steel', 'electric_guitar_clean',
+    'acoustic_bass', 'vibraphone', 'celesta', 'glockenspiel', 'music_box',
+    'orchestral_harp', 'koto', 'shamisen'
+]);
+
+// Shared audio chain: each instrument -> its own stereo pan -> master -> compressor -> speakers,
+// with a send from every pan into one shared reverb.
+let master;       // master volume
+let reverbSend;   // level of signal sent to the reverb
+const voiceNodes = {};   // stereo panner for each instrument, keyed by name
+
+// Build a reverb impulse response: stereo noise that fades out smoothly
+function makeReverbImpulse(seconds) {
+    const rate = audioContext.sampleRate;
+    const length = Math.floor(rate * seconds);
+    const impulse = audioContext.createBuffer(2, length, rate);
+
+    for (let channel = 0; channel < 2; channel++) {
+        const data = impulse.getChannelData(channel);
+
+        for (let i = 0; i < length; i++) {
+            data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, 3);
+        }
+    }
+
+    return impulse;
 }
 
-// INSTRUMENTS: one per voice of the chord, ordered LOW to HIGH register.
-// Sustaining instruments (bowed strings, winds) work best because notes are
-// held. Percussive ones (marimba, guitar, piano) die away while held.
-// Any smplr Soundfont name works, e.g. 'viola', 'oboe', 'string_ensemble_1', 'choir_aahs'.
-// 'colour' (r, g, b) is how that instrument's cells are drawn on the image.
-const INSTRUMENTS = [
-    { name: 'cello',    colour: '255, 112, 67'  },  // lowest notes
-    { name: 'clarinet', colour: '255, 202, 40'  },
-    { name: 'violin',   colour: '102, 187, 106' },
-    { name: 'flute',    colour: '66, 165, 245'  }   // highest notes
-];
+function setupAudioGraph() {
+    if (master) return;
+
+    // Compressor keeps four loud notes plus reverb from distorting
+    const compressor = audioContext.createDynamicsCompressor();
+    compressor.connect(audioContext.destination);
+
+    master = audioContext.createGain();
+    master.gain.value = 0.85;
+    master.connect(compressor);
+
+    const reverb = audioContext.createConvolver();
+    reverb.buffer = makeReverbImpulse(REVERB_SECONDS);
+    reverb.connect(master);
+
+    reverbSend = audioContext.createGain();
+    reverbSend.gain.value = REVERB_MIX;
+    reverbSend.connect(reverb);
+}
+
+// What is in use right now (set from the page when Generate is pressed)
+let currentScale = [];   // semitone steps of the selected scale
+let INSTRUMENTS = [];    // [{ name, colour }] of the selected scale, low to high
+
+function applySelectedScale() {
+    const key = scaleSelect && SCALES[scaleSelect.value] ? scaleSelect.value : DEFAULT_SCALE;
+    const scale = SCALES[key];
+
+    currentScale = scale.notes;
+
+    INSTRUMENTS = scale.instruments.map((name, i) => ({
+        name,
+        colour: VOICE_COLOURS[i % VOICE_COLOURS.length]
+    }));
+}
+
+applySelectedScale();
+
+// Load the samples for a list of instruments (each is only downloaded once).
+// If one can't be loaded, the fallback instrument plays in its place.
+function createInstrument(name) {
+    // Each instrument gets its own stereo pan feeding the shared master + reverb
+    if (!voiceNodes[name]) {
+        const pan = audioContext.createStereoPanner();
+        pan.connect(master);
+        pan.connect(reverbSend);
+
+        voiceNodes[name] = pan;
+    }
+
+    return new Soundfont(audioContext, {
+        instrument: name,
+        kit: KIT,
+        decayTime: FADE_OUT_TIME,
+        destination: voiceNodes[name],
+        loadLoopData: USE_LOOP_DATA && !PERCUSSIVE.has(name)
+    });
+}
+
+async function loadInstruments(list) {
+    for (const { name } of list) {
+        if (!instruments[name]) {
+            instruments[name] = createInstrument(name);
+        }
+    }
+
+    // Spread the voices across the stereo field, lowest on the left
+    list.forEach(({ name }, i) => {
+        voiceNodes[name].pan.value = VOICE_PANS[i % VOICE_PANS.length];
+    });
+
+    await Promise.all(list.map(async ({ name }) => {
+        try {
+            await instruments[name].load;
+        } catch (err) {
+            console.warn(`Could not load "${name}"; using ${FALLBACK_INSTRUMENT} instead.`, err);
+
+            if (!instruments[FALLBACK_INSTRUMENT]) {
+                instruments[FALLBACK_INSTRUMENT] = createInstrument(FALLBACK_INSTRUMENT);
+            }
+
+            await instruments[FALLBACK_INSTRUMENT].load;
+            instruments[name] = instruments[FALLBACK_INSTRUMENT];
+        }
+    }));
+}
 
 // SCAN SETTINGS
 // The image is read left to right as a scan line. Each COLUMN is one moment in
@@ -86,8 +259,7 @@ const INSTRUMENTS = [
 const COLUMNS = 128;            // time resolution (columns across the image)
 const ROWS = 20;                // pitch resolution (20 notes of the chosen scale)
 const COLUMN_DURATION = 0.15;   // seconds per column -> 128 x 0.15 = 19.2 s total
-const MIN_NOTE_DURATION = 0.4;  // shortest a note can ring (single-column notes)
-const MAX_NOTES_PER_COLUMN = INSTRUMENTS.length; // one note per instrument; strongest edges win
+const MIN_NOTE_DURATION = 0.6;  // shortest a note can ring (single-column notes)
 const THRESHOLD = 0.3;          // an edge must be this fraction of a "strong" edge to start a note
 const MIN_STRENGTH = 20;        // absolute floor so camera noise stays silent
 
@@ -98,7 +270,7 @@ const COLOUR_TOLERANCE = 35;    // hue change (degrees) that counts as a "colour
 const NEUTRAL_SATURATION = 0.2; // below this saturation an edge counts as colourless (white)
 
 // OVERLAY SETTINGS
-const FLASH_TIME = 0.3;         // seconds a note's highlight takes to fade out after it ends
+const FLASH_TIME = FADE_OUT_TIME; // the highlight fades out over the same time as the sound
 const MIN_CELL_WIDTH = 8;       // highlights are never drawn thinner than this many pixels
 
 // EDGE KERNELS (Sobel)
@@ -422,9 +594,9 @@ function buildNotes() {
             }
         }
 
-        // Keep only the strongest few (one per instrument)
+        // Keep only the strongest few (one per instrument of the chosen scale)
         candidates.sort((a, b) => b.rank - a.rank);
-        const chosen = candidates.slice(0, MAX_NOTES_PER_COLUMN);
+        const chosen = candidates.slice(0, INSTRUMENTS.length);
 
         const used = new Set();      // instruments taken in THIS chord
         const nextActive = [];
@@ -521,24 +693,20 @@ generateBtn.addEventListener('click', async () => {
 
     window.dispatchEvent(new CustomEvent('audiopen:play', { detail: 'image' }));
 
-    // Use whichever scale is selected in the page
-    currentScale = getSelectedScale();
+    // Use whichever scale (and its instruments) is selected in the page
+    applySelectedScale();
 
     // Create audio context
     if (!audioContext) {
         audioContext = new AudioContext();
     }
 
+    setupAudioGraph();
+
     await audioContext.resume();
 
-    // Load every instrument's samples (each is only loaded once)
-    for (const { name } of INSTRUMENTS) {
-        if (!instruments[name]) {
-            instruments[name] = new Soundfont(audioContext, { instrument: name });
-        }
-    }
-
-    await Promise.all(Object.values(instruments).map(i => i.load));
+    // Load the selected scale's instruments
+    await loadInstruments(INSTRUMENTS);
 
     noteEvents = buildNotes();
 
@@ -556,11 +724,16 @@ generateBtn.addEventListener('click', async () => {
     // Schedule each note once, held for the whole length of its edge
     try {
         for (const note of noteEvents) {
+            // Tiny random timing and loudness changes make it sound played, not typed
+            const wobbleTime = (Math.random() * 2 - 1) * HUMANIZE_TIME;
+            const wobbleVelocity = Math.round((Math.random() * 2 - 1) * HUMANIZE_VELOCITY);
+
             instruments[INSTRUMENTS[note.instrument].name].start({
                 note: note.midi,
-                time: note.time,
-                duration: note.duration,
-                velocity: note.velocity
+                time: Math.max(audioContext.currentTime, note.time + wobbleTime),
+                duration: note.duration,          // sounds for as long as the edge lasts...
+                decayTime: FADE_OUT_TIME,         // ...then fades away slowly
+                velocity: Math.max(1, Math.min(127, note.velocity + wobbleVelocity))
             });
         }
     } catch (err) {
