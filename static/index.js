@@ -11,27 +11,54 @@ const stopBtn = document.getElementById('stopMusicBtn');
 
 let stream;
 let audioContext;
-let instrument;      // smplr instrument (sampled sounds)
-let loadedName;      // name of the instrument currently loaded
-
-// Position marker (shows which part of the image is playing)
-let marker;
-let noteEvents = []; // { time, x, y } for every scheduled note
-let animationId = null;
+const instruments = {};  // smplr instruments, keyed by name (loaded on first use)
 
 // Holds the edge-detected image (this is what's displayed and sonified)
 const edgeCanvas = document.createElement('canvas');
 
+// Playback state (used by the on-image overlay)
+let noteEvents = [];   // every scheduled note, with its exact source pixel
+let startTime = 0;     // audioContext time when column 0 starts
+let overlay;           // transparent canvas drawn on top of the photo
+let animationId = null;
+
 // MUSICAL SETTINGS
 const SCALE = [0, 2, 4, 7, 9]; // C major pentatonic
-const IMAGE_WIDTH = 32;
-const IMAGE_HEIGHT = 16;
-const NOTE_DURATION = 0.12;
-const BPM = 120;
 
-// INSTRUMENT: any smplr Soundfont name, e.g. 'marimba', 'acoustic_grand_piano',
-// 'violin', 'flute', 'xylophone', 'music_box', 'acoustic_guitar_nylon'
-const INSTRUMENT = 'marimba';
+// INSTRUMENTS: one per voice of the chord, ordered LOW to HIGH register.
+// Sustaining instruments (bowed strings, winds) work best because notes are
+// held. Percussive ones (marimba, guitar, piano) die away while held.
+// Any smplr Soundfont name works, e.g. 'viola', 'oboe', 'string_ensemble_1', 'choir_aahs'.
+// 'colour' (r, g, b) is how that instrument's cells are drawn on the image.
+const INSTRUMENTS = [
+    { name: 'cello',    colour: '255, 112, 67'  },  // lowest notes
+    { name: 'clarinet', colour: '255, 202, 40'  },
+    { name: 'violin',   colour: '102, 187, 106' },
+    { name: 'flute',    colour: '66, 165, 245'  }   // highest notes
+];
+
+// SCAN SETTINGS
+// The image is read left to right as a scan line. Each COLUMN is one moment in
+// time; each ROW is one pitch (top of image = highest note). Where an edge
+// continues along the same row with the same colour, ONE note is held for its
+// whole length. A new note starts when the edge changes row or colour.
+const COLUMNS = 128;            // time resolution (columns across the image)
+const ROWS = 20;                // pitch resolution (20 pentatonic notes, ~4 octaves)
+const COLUMN_DURATION = 0.15;   // seconds per column -> 128 x 0.15 = 19.2 s total
+const MIN_NOTE_DURATION = 0.4;  // shortest a note can ring (single-column notes)
+const MAX_NOTES_PER_COLUMN = INSTRUMENTS.length; // one note per instrument; strongest edges win
+const THRESHOLD = 0.3;          // an edge must be this fraction of a "strong" edge to start a note
+const MIN_STRENGTH = 20;        // absolute floor so camera noise stays silent
+
+// CONTINUITY SETTINGS
+const CONTINUE_CUTOFF = 0.6;    // a held note survives down to 60% of the normal cutoff
+const CONTINUE_BONUS = 1.5;     // held notes are preferred over new ones when ranking
+const COLOUR_TOLERANCE = 35;    // hue change (degrees) that counts as a "colour change"
+const NEUTRAL_SATURATION = 0.2; // below this saturation an edge counts as colourless (white)
+
+// OVERLAY SETTINGS
+const FLASH_TIME = 0.3;         // seconds a note's highlight takes to fade out after it ends
+const MIN_CELL_WIDTH = 8;       // highlights are never drawn thinner than this many pixels
 
 // EDGE KERNELS (Sobel)
 // Horizontal edges: responds to brightness changes between rows.
@@ -58,11 +85,6 @@ function getScaleNote(degree) {
     const note = SCALE[degree % SCALE.length];
 
     return 48 + octave * 12 + note;
-}
-
-// Convert MIDI note to frequency
-function midiToFrequency(midi) {
-    return 440 * Math.pow(2, (midi - 69) / 12);
 }
 
 // Convolve the R, G and B channels separately with one 3x3 kernel.
@@ -185,6 +207,8 @@ onBtn.addEventListener('click', async () => {
 cameraBtn.addEventListener('click', () => {
     if (!video.videoWidth) return;
 
+    stopMusic();
+
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
 
@@ -211,6 +235,207 @@ cameraBtn.addEventListener('click', () => {
     generateBtn.disabled = false;
 });
 
+// ---------------------------------------------------------------
+// MUSIC
+// ---------------------------------------------------------------
+
+// Hue of an RGB colour in degrees (0-360), or -1 if it is basically white/grey
+function getHue(r, g, b) {
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+
+    if (max === 0 || (max - min) / max < NEUTRAL_SATURATION) {
+        return -1;
+    }
+
+    const d = max - min;
+    let hue;
+
+    if (max === r) hue = ((g - b) / d) % 6;
+    else if (max === g) hue = (b - r) / d + 2;
+    else hue = (r - g) / d + 4;
+
+    return (hue * 60 + 360) % 360;
+}
+
+// Do two hues count as the same colour? (-1 = neutral)
+function sameColour(a, b) {
+    if (a === -1 || b === -1) return a === b;
+
+    const difference = Math.abs(a - b);
+
+    return Math.min(difference, 360 - difference) <= COLOUR_TOLERANCE;
+}
+
+// Analyse the edge image and build the list of notes.
+// Works on the FULL-resolution edge image, so thin edges are never skipped.
+function buildNotes() {
+    const width = edgeCanvas.width;
+    const height = edgeCanvas.height;
+
+    const pixels = edgeCanvas
+        .getContext('2d')
+        .getImageData(0, 0, width, height).data;
+
+    // For every grid cell keep the STRONGEST edge pixel in it (max pooling)
+    // and remember exactly where that pixel is.
+    const cellCount = COLUMNS * ROWS;
+    const strength = new Float32Array(cellCount);
+    const pixelX = new Float32Array(cellCount);
+    const pixelY = new Float32Array(cellCount);
+    const hue = new Float32Array(cellCount).fill(-1);
+
+    for (let y = 0; y < height; y++) {
+
+        const row = Math.min(ROWS - 1, Math.floor(y * ROWS / height));
+
+        for (let x = 0; x < width; x++) {
+
+            const column = Math.min(COLUMNS - 1, Math.floor(x * COLUMNS / width));
+
+            const i = (y * width + x) * 4;
+
+            // Edge strength = luminance of the edge pixel
+            const s = pixels[i] * 0.299 + pixels[i + 1] * 0.587 + pixels[i + 2] * 0.114;
+
+            const cell = row * COLUMNS + column;
+
+            if (s > strength[cell]) {
+                strength[cell] = s;
+                pixelX[cell] = x;
+                pixelY[cell] = y;
+                hue[cell] = getHue(pixels[i], pixels[i + 1], pixels[i + 2]);
+            }
+        }
+    }
+
+    // "Strong edge" reference = 98th percentile of cell strengths.
+    // (Using the single brightest value would let one glare spot silence everything else.)
+    const sorted = strength.slice().sort();
+    const reference = Math.max(1, sorted[Math.floor(sorted.length * 0.98)]);
+
+    const cutoff = Math.max(MIN_STRENGTH, reference * THRESHOLD);
+
+    const notes = [];
+    let active = [];   // notes still being held from the previous column
+
+    for (let column = 0; column < COLUMNS; column++) {
+
+        // Collect every row in this column that has an edge strong enough
+        const candidates = [];
+
+        for (let row = 0; row < ROWS; row++) {
+            const cell = row * COLUMNS + column;
+
+            // Is this the continuation of a note already sounding
+            // (same row, same colour)?
+            const holding = active.find(n => n.row === row && sameColour(n.hue, hue[cell]));
+
+            // Held notes get a lower cutoff and a ranking bonus, so one weak
+            // pixel in a long edge does not chop the note into pieces.
+            const needed = holding ? cutoff * CONTINUE_CUTOFF : cutoff;
+
+            if (strength[cell] >= needed) {
+                candidates.push({
+                    row,
+                    cell,
+                    holding,
+                    rank: strength[cell] * (holding ? CONTINUE_BONUS : 1)
+                });
+            }
+        }
+
+        // Keep only the strongest few (one per instrument)
+        candidates.sort((a, b) => b.rank - a.rank);
+        const chosen = candidates.slice(0, MAX_NOTES_PER_COLUMN);
+
+        const used = new Set();      // instruments taken in THIS chord
+        const nextActive = [];
+
+        // 1) Notes that simply carry on keep their instrument
+        for (const c of chosen) {
+            if (!c.holding) continue;
+
+            const note = c.holding;
+
+            note.endColumn = column;
+            note.peak = Math.max(note.peak, strength[c.cell]);
+            note.points.push({
+                column,
+                x: (pixelX[c.cell] + 0.5) / width,
+                y: (pixelY[c.cell] + 0.5) / height
+            });
+
+            used.add(note.instrument);
+            nextActive.push(note);
+        }
+
+        // 2) New notes pick an instrument that suits their register
+        for (const c of chosen) {
+            if (c.holding) continue;
+
+            // Top row = highest pitch
+            const degree = ROWS - 1 - c.row;
+
+            let pick = Math.min(
+                INSTRUMENTS.length - 1,
+                Math.floor(degree * INSTRUMENTS.length / ROWS)
+            );
+
+            // If another note in this chord already took it, use the nearest free one
+            if (used.has(pick)) {
+                let best = -1;
+
+                for (let k = 0; k < INSTRUMENTS.length; k++) {
+                    if (used.has(k)) continue;
+
+                    if (best === -1 || Math.abs(k - pick) < Math.abs(best - pick)) {
+                        best = k;
+                    }
+                }
+
+                pick = best;
+            }
+
+            used.add(pick);
+
+            const note = {
+                row: c.row,
+                midi: getScaleNote(degree),
+                instrument: pick,            // index into INSTRUMENTS
+                hue: hue[c.cell],
+                startColumn: column,
+                endColumn: column,
+                peak: strength[c.cell],
+                points: [{
+                    column,
+                    x: (pixelX[c.cell] + 0.5) / width,
+                    y: (pixelY[c.cell] + 0.5) / height
+                }]
+            };
+
+            notes.push(note);
+            nextActive.push(note);
+        }
+
+        active = nextActive;
+    }
+
+    // Final timing and loudness for each note
+    for (const note of notes) {
+        const columns = note.endColumn - note.startColumn + 1;
+
+        note.offset = note.startColumn * COLUMN_DURATION;
+        note.runTime = columns * COLUMN_DURATION;          // how long the edge lasts
+        note.duration = Math.max(note.runTime, MIN_NOTE_DURATION);
+
+        // Stronger edge = louder note (MIDI velocity 30-127)
+        note.velocity = Math.round(30 + Math.min(1, note.peak / reference) * 97);
+    }
+
+    return notes;
+}
+
 // Generate music from the edge image
 generateBtn.addEventListener('click', async () => {
 
@@ -224,163 +449,269 @@ generateBtn.addEventListener('click', async () => {
 
     await audioContext.resume();
 
-    // Load the instrument samples (only again if INSTRUMENT changed)
-    if (!instrument || loadedName !== INSTRUMENT) {
-        instrument = new Soundfont(audioContext, { instrument: INSTRUMENT });
-        loadedName = INSTRUMENT;
-    }
-
-    await instrument.load;
-
-    // Resize edge image to 32 x 16
-    const smallCanvas = document.createElement('canvas');
-
-    smallCanvas.width = IMAGE_WIDTH;
-    smallCanvas.height = IMAGE_HEIGHT;
-
-    const smallContext = smallCanvas.getContext('2d');
-
-    smallContext.drawImage(
-        edgeCanvas,
-        0, 0,
-        IMAGE_WIDTH,
-        IMAGE_HEIGHT
-    );
-
-    // Extract pixel data
-    const imageData = smallContext.getImageData(
-        0, 0,
-        IMAGE_WIDTH,
-        IMAGE_HEIGHT
-    );
-
-    const pixels = imageData.data;
-
-    // Schedule music
-    const startTime = audioContext.currentTime + 0.1;
-
-    let noteIndex = 0;
-    noteEvents = [];
-
-    for (let y = 0; y < IMAGE_HEIGHT; y++) {
-
-        for (let x = 0; x < IMAGE_WIDTH; x++) {
-
-            const index = (y * IMAGE_WIDTH + x) * 4;
-
-            const red = pixels[index];
-            const green = pixels[index + 1];
-            const blue = pixels[index + 2];
-            const alpha = pixels[index + 3];
-
-            // Overall edge strength across all three channels
-            const edge = (red * 0.299 + green * 0.587 + blue * 0.114);
-
-            // Ignore transparent pixels
-            if (alpha === 0) continue;
-
-            // Convert edge strength into a musical scale degree
-            const edgeDegree = Math.round(
-                (edge / 255) * 14
-            );
-
-            // Vertical position changes octave
-            const verticalDegree = Math.round(
-                (1 - y / (IMAGE_HEIGHT - 1)) * 5
-            );
-
-            const midiNote = getScaleNote(
-                edgeDegree + verticalDegree
-            );
-
-            // Note timing
-            const noteTime =
-                startTime + noteIndex * NOTE_DURATION;
-
-            // Stronger edges play louder (MIDI velocity 30-127)
-            const velocity = Math.round(30 + (edge / 255) * 97);
-
-            instrument.start({
-                note: midiNote,
-                time: noteTime,
-                duration: NOTE_DURATION,
-                velocity: velocity
-            });
-
-            // Remember which cell of the image this note came from
-            noteEvents.push({ time: noteTime, x: x, y: y });
-
-            noteIndex++;
+    // Load every instrument's samples (each is only loaded once)
+    for (const { name } of INSTRUMENTS) {
+        if (!instruments[name]) {
+            instruments[name] = new Soundfont(audioContext, { instrument: name });
         }
     }
 
-    console.log(`Generated ${noteIndex} notes!`);
+    await Promise.all(Object.values(instruments).map(i => i.load));
 
-    startMarker();
+    noteEvents = buildNotes();
+
+    startTime = audioContext.currentTime + 0.1;
+
+    for (const note of noteEvents) {
+        note.time = startTime + note.offset;
+    }
+
+    console.log(`Generated ${noteEvents.length} notes!`);
+
+    // Start the on-screen highlighting first, so it shows even if audio has a problem
+    startOverlay();
+
+    // Schedule each note once, held for the whole length of its edge
+    try {
+        for (const note of noteEvents) {
+            instruments[INSTRUMENTS[note.instrument].name].start({
+                note: note.midi,
+                time: note.time,
+                duration: note.duration,
+                velocity: note.velocity
+            });
+        }
+    } catch (err) {
+        console.error('Audio scheduling error:', err);
+    }
 });
 
-// Create the highlight box that sits on top of the displayed image
-function getMarker() {
-    if (!marker) {
-        marker = document.createElement('div');
+// ---------------------------------------------------------------
+// OVERLAY (shows exactly where each note comes from)
+// ---------------------------------------------------------------
 
-        marker.style.position = 'absolute';
-        marker.style.pointerEvents = 'none';
-        marker.style.boxSizing = 'border-box';
-        marker.style.border = '2px solid #ffeb3b';
-        marker.style.background = 'rgba(255, 235, 59, 0.35)';
-        marker.style.display = 'none';
+// Work out where the image is actually drawn on screen, allowing for
+// borders, padding and object-fit, so the overlay lines up with the pixels.
+function getImageRect() {
+    const box = photo.getBoundingClientRect();
+    const style = getComputedStyle(photo);
 
-        // The marker is positioned relative to the image's parent element
-        const parent = photo.parentElement;
+    const left = box.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
+    const top = box.top + parseFloat(style.borderTopWidth) + parseFloat(style.paddingTop);
+    const width = box.width
+        - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth)
+        - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+    const height = box.height
+        - parseFloat(style.borderTopWidth) - parseFloat(style.borderBottomWidth)
+        - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
 
-        if (getComputedStyle(parent).position === 'static') {
-            parent.style.position = 'relative';
-        }
+    const rect = { left, top, width, height };
 
-        parent.appendChild(marker);
+    const fit = style.objectFit;
+
+    if ((fit === 'contain' || fit === 'cover' || fit === 'scale-down') && photo.naturalWidth) {
+
+        let scale = fit === 'cover'
+            ? Math.max(width / photo.naturalWidth, height / photo.naturalHeight)
+            : Math.min(width / photo.naturalWidth, height / photo.naturalHeight);
+
+        if (fit === 'scale-down') scale = Math.min(scale, 1);
+
+        // Assumes the default object-position (centred)
+        rect.width = photo.naturalWidth * scale;
+        rect.height = photo.naturalHeight * scale;
+        rect.left = left + (width - rect.width) / 2;
+        rect.top = top + (height - rect.height) / 2;
     }
 
-    return marker;
+    return rect;
 }
 
-// Move the marker to whichever note is sounding right now
-function startMarker() {
+// Transparent canvas covering the screen, drawn on top of everything.
+// Styles are set with !important because the page's own CSS may hide or
+// resize every <canvas> (the capture canvas is usually hidden), which would
+// also hide this one.
+function getOverlay() {
+    if (!overlay) {
+        overlay = document.createElement('canvas');
+
+        const styles = {
+            display: 'block',
+            visibility: 'visible',
+            opacity: '1',
+            position: 'fixed',
+            left: '0',
+            top: '0',
+            width: '100vw',
+            height: '100vh',
+            'max-width': 'none',
+            'pointer-events': 'none',
+            'z-index': '2147483647'
+        };
+
+        for (const [property, value] of Object.entries(styles)) {
+            overlay.style.setProperty(property, value, 'important');
+        }
+
+        document.body.appendChild(overlay);
+    }
+
+    return overlay;
+}
+
+function clearOverlay() {
+    if (overlay) {
+        overlay.getContext('2d').clearRect(0, 0, overlay.width, overlay.height);
+    }
+}
+
+// Draw a rectangle that is never thinner than MIN_CELL_WIDTH (so a one-column
+// cell is still easy to see). The extra width is added equally on both sides.
+function visibleRect(x, y, w, h) {
+    if (w < MIN_CELL_WIDTH) {
+        x -= (MIN_CELL_WIDTH - w) / 2;
+        w = MIN_CELL_WIDTH;
+    }
+
+    return { x, y, w, h };
+}
+
+// Redraw the overlay every frame, in sync with the audio clock
+function startOverlay() {
     cancelAnimationFrame(animationId);
 
-    const box = getMarker();
-    let next = 0; // index of the first note that hasn't started yet
+    const surface = getOverlay();
+    const context = surface.getContext('2d');
+
+    const totalTime = COLUMNS * COLUMN_DURATION;
 
     function frame() {
-        // Compensate for audio output delay so the marker lines up with what you hear
-        const now = audioContext.currentTime - (audioContext.outputLatency || 0);
+        try {
+            // Keep the canvas sharp on high-DPI screens and after window resizes
+            const ratio = window.devicePixelRatio || 1;
+            const w = Math.round(window.innerWidth * ratio);
+            const h = Math.round(window.innerHeight * ratio);
 
-        // Advance past every note whose start time has passed
-        while (next < noteEvents.length && noteEvents[next].time <= now) {
-            next++;
-        }
+            if (surface.width !== w || surface.height !== h) {
+                surface.width = w;
+                surface.height = h;
+            }
 
-        const last = noteEvents[noteEvents.length - 1];
+            context.setTransform(ratio, 0, 0, ratio, 0, 0);
+            context.clearRect(0, 0, window.innerWidth, window.innerHeight);
 
-        // Finished: hide the marker and stop animating
-        if (last && now > last.time + NOTE_DURATION) {
-            box.style.display = 'none';
-            return;
-        }
+            // Compensate for audio output delay so visuals match what you hear
+            const now = audioContext.currentTime - (audioContext.outputLatency || 0);
+            const elapsed = now - startTime;
 
-        // The current note is the last one that has started
-        if (next > 0) {
-            const note = noteEvents[next - 1];
+            // Finished
+            if (elapsed > totalTime + FLASH_TIME + MIN_NOTE_DURATION) {
+                return;
+            }
 
-            // The 32 x 16 grid covers the whole displayed image
-            const cellWidth = photo.offsetWidth / IMAGE_WIDTH;
-            const cellHeight = photo.offsetHeight / IMAGE_HEIGHT;
+            const rect = getImageRect();
+            const columnWidth = rect.width / COLUMNS;
+            const rowHeight = rect.height / ROWS;
 
-            box.style.left = (photo.offsetLeft + note.x * cellWidth) + 'px';
-            box.style.top = (photo.offsetTop + note.y * cellHeight) + 'px';
-            box.style.width = cellWidth + 'px';
-            box.style.height = cellHeight + 'px';
-            box.style.display = 'block';
+            // Column the scan line is in right now (-1 before the start)
+            const progress = Math.min(1, Math.max(0, elapsed / totalTime));
+            const currentColumn = elapsed < 0
+                ? -1
+                : Math.min(COLUMNS - 1, Math.floor(progress * COLUMNS));
+
+            // Scan line + the column being read
+            if (elapsed >= 0 && elapsed <= totalTime) {
+                context.fillStyle = 'rgba(255, 235, 59, 0.15)';
+                context.fillRect(rect.left + currentColumn * columnWidth, rect.top, columnWidth, rect.height);
+
+                context.strokeStyle = 'rgb(255, 235, 59)';
+                context.lineWidth = 1.5;
+                context.beginPath();
+                context.moveTo(rect.left + progress * rect.width, rect.top);
+                context.lineTo(rect.left + progress * rect.width, rect.top + rect.height);
+                context.stroke();
+            }
+
+            // One bar per note, spanning every column the note is held for,
+            // coloured by the instrument playing it.
+            for (const note of noteEvents) {
+                const noteEnd = note.time + note.runTime;
+
+                if (now < note.time || now > noteEnd + FLASH_TIME) continue;
+
+                // Fully lit while sounding, then fades out
+                const alpha = now <= noteEnd ? 1 : 1 - (now - noteEnd) / FLASH_TIME;
+
+                const colour = INSTRUMENTS[note.instrument].colour;
+                const columns = note.endColumn - note.startColumn + 1;
+
+                const x = rect.left + note.startColumn * columnWidth;
+                const y = rect.top + note.row * rowHeight;
+
+                // Whole note, dim: shows how long it will be held
+                let box = visibleRect(x, y, columns * columnWidth, rowHeight);
+                context.fillStyle = `rgba(${colour}, ${0.22 * alpha})`;
+                context.fillRect(box.x, box.y, box.w, box.h);
+
+                // Part already played, bright
+                const playedColumns = Math.min(columns, Math.max(1, currentColumn - note.startColumn + 1));
+                box = visibleRect(x, y, playedColumns * columnWidth, rowHeight);
+
+                context.fillStyle = `rgba(${colour}, ${0.6 * alpha})`;
+                context.fillRect(box.x, box.y, box.w, box.h);
+
+                context.strokeStyle = `rgba(${colour}, ${alpha})`;
+                context.lineWidth = 2;
+                context.strokeRect(box.x, box.y, box.w, box.h);
+
+                // White outline = the cell being played right now
+                if (now <= noteEnd) {
+                    const head = visibleRect(
+                        rect.left + Math.min(note.endColumn, Math.max(note.startColumn, currentColumn)) * columnWidth,
+                        y, columnWidth, rowHeight
+                    );
+
+                    context.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+                    context.lineWidth = 1.5;
+                    context.strokeRect(head.x, head.y, head.w, head.h);
+                }
+
+                // White dots = the exact edge pixels the note follows (up to now)
+                context.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+
+                for (const p of note.points) {
+                    if (p.column > currentColumn) break;
+
+                    context.beginPath();
+                    context.arc(
+                        rect.left + p.x * rect.width,
+                        rect.top + p.y * rect.height,
+                        1.5, 0, Math.PI * 2
+                    );
+                    context.fill();
+                }
+            }
+
+            // Legend: which colour is which instrument
+            context.font = '12px sans-serif';
+            context.textBaseline = 'middle';
+
+            INSTRUMENTS.forEach((instr, i) => {
+                const y = rect.top + 14 + i * 18;
+
+                context.fillStyle = 'rgba(0, 0, 0, 0.6)';
+                context.fillRect(rect.left + 6, y - 8, 110, 16);
+
+                context.fillStyle = `rgb(${instr.colour})`;
+                context.fillRect(rect.left + 10, y - 5, 10, 10);
+
+                context.fillStyle = '#fff';
+                context.fillText(instr.name.replace(/_/g, ' '), rect.left + 26, y);
+            });
+
+        } catch (err) {
+            // Never let a drawing error silently kill the animation
+            console.error('Overlay error:', err);
         }
 
         animationId = requestAnimationFrame(frame);
@@ -391,15 +722,10 @@ function startMarker() {
 
 // Stop playback
 function stopMusic() {
-    if (instrument) {
-        instrument.stop();
-    }
+    Object.values(instruments).forEach(i => i.stop());
 
     cancelAnimationFrame(animationId);
-
-    if (marker) {
-        marker.style.display = 'none';
-    }
+    clearOverlay();
 }
 
 stopBtn.addEventListener('click', stopMusic);
