@@ -87,6 +87,12 @@ p{
     font-family: 'Lucida Sans', 'Lucida Sans Regular', 'Lucida Grande', 'Lucida Sans Unicode', Geneva, Verdana, sans-serif;
 }
 
+.photobooth{
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
 .preview-row {
     display: flex;
     gap: 1rem;
@@ -124,5 +130,6 @@ p{
 button {
     background-image: linear-gradient(to right,#F06097,#F0AD60,#ADEB5B,#B9F071,#5BEBDD,#A85BEB);
     color: #000;
-    padding: 2vh 3vw;
+    padding: 1vh 2vw;
+    border-radius: 5vw;
 }
