@@ -43,8 +43,8 @@ function midiToFrequency(midi) {
     return 440 * Math.pow(2, (midi - 69) / 12);
 }
 
-// Apply the edge kernel to the R values of an RGBA ImageData.
-// Returns a new ImageData where R = G = B = edge strength, A = 255.
+// Apply the edge kernel to the R, G and B values of an RGBA ImageData separately.
+// Returns a new ImageData where each channel holds its own edge strength, A = 255.
 function applyEdgeKernel(imageData) {
     const { width, height, data } = imageData;
     const output = new ImageData(width, height);
@@ -53,7 +53,8 @@ function applyEdgeKernel(imageData) {
     for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
 
-            let sum = 0;
+            // One running sum per colour channel
+            const sums = [0, 0, 0];
 
             for (let ky = -1; ky <= 1; ky++) {
                 for (let kx = -1; kx <= 1; kx++) {
@@ -62,22 +63,21 @@ function applyEdgeKernel(imageData) {
                     const px = Math.min(width - 1, Math.max(0, x + kx));
                     const py = Math.min(height - 1, Math.max(0, y + ky));
 
-                    // R value of RGBA array
-                    const red = data[(py * width + px) * 4];
-
                     const weight = EDGE_KERNEL[(ky + 1) * 3 + (kx + 1)];
+                    const p = (py * width + px) * 4;
 
-                    sum += red * weight;
+                    // Same kernel applied to R, G and B separately
+                    sums[0] += data[p] * weight;
+                    sums[1] += data[p + 1] * weight;
+                    sums[2] += data[p + 2] * weight;
                 }
             }
 
-            // Edge strength, clamped to 0-255
-            const edge = Math.min(255, Math.abs(sum));
-
+            // Recombine the three edge channels into one RGB pixel
             const i = (y * width + x) * 4;
-            out[i] = edge;
-            out[i + 1] = edge;
-            out[i + 2] = edge;
+            out[i] = Math.min(255, Math.abs(sums[0]));
+            out[i + 1] = Math.min(255, Math.abs(sums[1]));
+            out[i + 2] = Math.min(255, Math.abs(sums[2]));
             out[i + 3] = 255;
         }
     }
@@ -181,9 +181,13 @@ generateBtn.addEventListener('click', async () => {
 
             const index = (y * IMAGE_WIDTH + x) * 4;
 
-            // Edge image is greyscale, so R holds the edge strength
-            const edge = pixels[index];
+            const red = pixels[index];
+            const green = pixels[index + 1];
+            const blue = pixels[index + 2];
             const alpha = pixels[index + 3];
+
+            // Overall edge strength across all three channels
+            const edge = (red * 0.299 + green * 0.587 + blue * 0.114);
 
             // Ignore transparent pixels
             if (alpha === 0) continue;
@@ -204,9 +208,13 @@ generateBtn.addEventListener('click', async () => {
 
             const frequency = midiToFrequency(midiNote);
 
-            // The edge image has no colour (hue is meaningless),
-            // so strong edges get a brighter timbre instead
-            const waveform = edge > 64 ? 'triangle' : 'sine';
+            // Colour of the edge influences timbre
+            const hue = Math.atan2(
+                Math.sqrt(3) * (green - blue),
+                2 * red - green - blue
+            );
+
+            const waveform = hue > 0 ? 'triangle' : 'sine';
 
             // Create oscillator
             const oscillator = audioContext.createOscillator();
