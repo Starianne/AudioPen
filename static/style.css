@@ -97,13 +97,10 @@ h3 {
     border: solid;
     background-color: #ddd;
     object-fit: cover;
-<<<<<<< HEAD
 }
     */
 
 .takenimg {
     width: 45%;
     aspect-ratio: 16/9;
-=======
->>>>>>> 57cc9ef275810a7f304c88fd3d689647b5f96a0e
 }
