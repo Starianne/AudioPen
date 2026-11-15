@@ -9,7 +9,7 @@ canvas {
 }
 
 *{
-    font-family: 'Lucida Sans', 'Lucida Sans Regular', 'Lucida Grande', 'Lucida Sans Unicode', Geneva, Verdana, sans-serif;
+    overflow-x: hidden;
 }
 
 .banner {
@@ -32,6 +32,7 @@ canvas {
 }
 
 .bottom-nav {
+    font-family: 'Lucida Sans', 'Lucida Sans Regular', 'Lucida Grande', 'Lucida Sans Unicode', Geneva, Verdana, sans-serif;
     background-color: #211144;
     display: flex;
     justify-content: space-around;
@@ -70,6 +71,7 @@ h1 {
 h2 {
     text-decoration: underline wavy;
     padding: 5px;
+    font-family: 'Lucida Sans', 'Lucida Sans Regular', 'Lucida Grande', 'Lucida Sans Unicode', Geneva, Verdana, sans-serif;
 }
 
 .intro {
@@ -78,7 +80,13 @@ h2 {
 
 h3 {
     padding: 5px;
+    font-family: 'Lucida Sans', 'Lucida Sans Regular', 'Lucida Grande', 'Lucida Sans Unicode', Geneva, Verdana, sans-serif;
 }
+
+p{
+    font-family: 'Lucida Sans', 'Lucida Sans Regular', 'Lucida Grande', 'Lucida Sans Unicode', Geneva, Verdana, sans-serif;
+}
+
 .preview-row {
     display: flex;
     gap: 1rem;
