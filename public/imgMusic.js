@@ -107,6 +107,11 @@ const SCALES = {
         label: 'Chromatic',
         notes: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
         instruments: ['contrabass', 'cello', 'violin', 'flute']
+    },
+    drumAndBass: {
+        label: 'Drum and bass',
+        notes: [0, 2, 3, 5, 7, 8, 10],
+        instruments: ['synth_bass_1', 'synth_bass_2', 'synth_drum', 'taiko_drum']
     }
 };
 
@@ -149,7 +154,7 @@ const HUMANIZE_VELOCITY = 6;   // random loudness wobble per note (MIDI velocity
 const PERCUSSIVE = new Set([
     'acoustic_guitar_nylon', 'acoustic_guitar_steel', 'electric_guitar_clean',
     'acoustic_bass', 'vibraphone', 'celesta', 'glockenspiel', 'music_box',
-    'orchestral_harp', 'koto', 'shamisen'
+    'orchestral_harp', 'koto', 'shamisen', 'synth_drum', 'taiko_drum'
 ]);
 
 // Shared audio chain: each instrument -> its own stereo pan -> master -> compressor -> speakers,
