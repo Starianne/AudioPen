@@ -19,8 +19,19 @@
     <div id="photobooth">
             <h3>Here's a little demo:</h3>
             <tr>
-                <th><video class="videoplayer" id="video" autoplay playsinline></video></th>
-                <th><img src="imgs/placeholder.svg" id="photo" alt="Your photo will show up here"/></th>
+                <div class="preview-row">
+                    <div class="preview-cell">
+                        <video class="videoplayer" id="video" autoplay playsinline></video>
+                    </div>
+                    <div class="preview-cell">
+                        <img class="videoplayer"
+                             src="imgs/placeholder.svg"
+                             id="photo"
+                             alt="Your photo will show up here" />
+                    </div>
+                </div>
+                <!--<th><video class="videoplayer" id="video" autoplay playsinline></video></th>
+    <th><img class ="videoplayer" src="imgs/placeholder.svg" id="photo" alt="Your photo will show up here"/></th>-->
             </tr>
             <button id="onBtn">Camera On</button>
             <button id="cameraBtn">Take a photo!</button>
