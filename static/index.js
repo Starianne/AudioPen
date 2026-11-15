@@ -21,14 +21,24 @@ const IMAGE_HEIGHT = 16;
 const NOTE_DURATION = 0.12;
 const BPM = 120;
 
-// EDGE KERNEL (Sobel, horizontal edges)
-// Responds to changes in brightness between rows, i.e. horizontal edges.
-// For vertical edges instead, swap to: [-1, 0, 1, -2, 0, 2, -1, 0, 1]
-const EDGE_KERNEL = [
+// EDGE KERNELS (Sobel)
+// Horizontal edges: responds to brightness changes between rows.
+const EDGE_KERNEL_H = [
     -1, -2, -1,
      0,  0,  0,
      1,  2,  1
 ];
+
+// Vertical edges: responds to brightness changes between columns.
+const EDGE_KERNEL_V = [
+    -1, 0, 1,
+    -2, 0, 2,
+    -1, 0, 1
+];
+
+// EDGE IMAGE TUNING
+const EDGE_GAIN = 2;     // overall brightness of edges (raise if too dark)
+const COLOUR_GAIN = 3;   // colour saturation (raise for stronger colour, 0 = white edges)
 
 // Convert a scale degree into a MIDI note
 function getScaleNote(degree) {
@@ -43,18 +53,17 @@ function midiToFrequency(midi) {
     return 440 * Math.pow(2, (midi - 69) / 12);
 }
 
-// Apply the edge kernel to the R, G and B values of an RGBA ImageData separately.
-// Returns a new ImageData where each channel holds its own edge strength, A = 255.
-function applyEdgeKernel(imageData) {
+// Convolve the R, G and B channels separately with one 3x3 kernel.
+// Returns a Float32Array of width*height*3 absolute edge strengths (R, G, B per pixel).
+function convolveChannels(imageData, kernel) {
     const { width, height, data } = imageData;
-    const output = new ImageData(width, height);
-    const out = output.data;
+    const result = new Float32Array(width * height * 3);
 
     for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
 
             // One running sum per colour channel
-            const sums = [0, 0, 0];
+            let sumR = 0, sumG = 0, sumB = 0;
 
             for (let ky = -1; ky <= 1; ky++) {
                 for (let kx = -1; kx <= 1; kx++) {
@@ -63,23 +72,80 @@ function applyEdgeKernel(imageData) {
                     const px = Math.min(width - 1, Math.max(0, x + kx));
                     const py = Math.min(height - 1, Math.max(0, y + ky));
 
-                    const weight = EDGE_KERNEL[(ky + 1) * 3 + (kx + 1)];
+                    const weight = kernel[(ky + 1) * 3 + (kx + 1)];
                     const p = (py * width + px) * 4;
 
-                    // Same kernel applied to R, G and B separately
-                    sums[0] += data[p] * weight;
-                    sums[1] += data[p + 1] * weight;
-                    sums[2] += data[p + 2] * weight;
+                    sumR += data[p] * weight;
+                    sumG += data[p + 1] * weight;
+                    sumB += data[p + 2] * weight;
                 }
             }
 
-            // Recombine the three edge channels into one RGB pixel
-            const i = (y * width + x) * 4;
-            out[i] = Math.min(255, Math.abs(sums[0]));
-            out[i + 1] = Math.min(255, Math.abs(sums[1]));
-            out[i + 2] = Math.min(255, Math.abs(sums[2]));
-            out[i + 3] = 255;
+            const o = (y * width + x) * 3;
+            result[o] = Math.abs(sumR);
+            result[o + 1] = Math.abs(sumG);
+            result[o + 2] = Math.abs(sumB);
         }
+    }
+
+    return result;
+}
+
+// Turn three per-channel edge strengths into one RGB colour (0-255 each).
+// BRIGHTNESS comes from how strong the edge is.
+// COLOUR comes from which channels changed LEAST (the ink colour).
+function edgeToColour(aR, aG, aB) {
+    const m = Math.max(aR, aG, aB);   // strongest channel
+    const mn = Math.min(aR, aG, aB);  // weakest channel
+
+    const brightness = Math.min(255, m * EDGE_GAIN);
+
+    // Start white; this is also what neutral edges (glare) stay.
+    let r = 1, g = 1, b = 1;
+
+    if (m > 0 && m > mn) {
+        // 0 = all channels changed equally, 1 = only one channel changed
+        const spread = (m - mn) / m;
+
+        // Complement of each channel, normalised so the brightest is 1
+        const cR = (m - aR) / m / spread;
+        const cG = (m - aG) / m / spread;
+        const cB = (m - aB) / m / spread;
+
+        // How much to trust the colour: neutral edges -> white
+        const t = Math.min(1, spread * COLOUR_GAIN);
+
+        r = (1 - t) + t * cR;
+        g = (1 - t) + t * cG;
+        b = (1 - t) + t * cB;
+    }
+
+    return [brightness * r, brightness * g, brightness * b];
+}
+
+// Build the coloured edge image: horizontal and vertical edge versions
+// are each coloured, then summed together (clamped to 255).
+// Returns a new ImageData, A = 255.
+function applyEdgeKernel(imageData) {
+    const { width, height } = imageData;
+    const output = new ImageData(width, height);
+    const out = output.data;
+
+    const horizontal = convolveChannels(imageData, EDGE_KERNEL_H);
+    const vertical = convolveChannels(imageData, EDGE_KERNEL_V);
+
+    for (let n = 0; n < width * height; n++) {
+        const o = n * 3;
+        const i = n * 4;
+
+        const h = edgeToColour(horizontal[o], horizontal[o + 1], horizontal[o + 2]);
+        const v = edgeToColour(vertical[o], vertical[o + 1], vertical[o + 2]);
+
+        // Sum the two versions
+        out[i] = Math.min(255, h[0] + v[0]);
+        out[i + 1] = Math.min(255, h[1] + v[1]);
+        out[i + 2] = Math.min(255, h[2] + v[2]);
+        out[i + 3] = 255;
     }
 
     return output;
