@@ -519,6 +519,8 @@ generateBtn.addEventListener('click', async () => {
     // Stop previous composition
     stopMusic();
 
+    window.dispatchEvent(new CustomEvent('audiopen:play', { detail: 'image' }));
+
     // Use whichever scale is selected in the page
     currentScale = getSelectedScale();
 
@@ -869,12 +871,16 @@ function stopMusic() {
 
 stopBtn.addEventListener('click', stopMusic);
 
+window.addEventListener('audiopen:play', e => { if (e.detail !== 'image') stopMusic(); });
+
 const imageInput = document.getElementById("imageInput");
 
 imageInput.addEventListener("change", (event) => {
     const file = event.target.files[0];
 
     if (!file) return;
+
+    event.target.value = '';
 
     const img = new Image();
 
