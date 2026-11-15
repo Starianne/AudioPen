@@ -7,6 +7,7 @@
     <meta name="description" content="Audio">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <script type="module" src="{{ url_for('static', filename='index.js') }}" defer></script>
+    <script type="module" src="{{ url_for('static', filename='dataMusic.js') }}" defer></script>
     <link rel="stylesheet" media="screen" href="https://fontlibrary.org/face/patchwork" type="text/css" />
 </head>
 <body>
@@ -44,6 +45,12 @@
                 Stop Music ⏹
             </button>
     </div>
+
+    <input type="file" id="fileInput" accept=".csv,.tsv,.txt">
+    <input type="range" id="positionSlider" min="0" max="100" value="50">
+    <button id="generateMusicBtn2" disabled>Generate music</button>
+    <button id="stopMusicBtn2">Stop</button>
+    <pre id="info"></pre>
 
 
         <div class="container">
