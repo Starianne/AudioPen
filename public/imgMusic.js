@@ -113,8 +113,8 @@ const SCALES = {
         notes: [0, 2, 3, 5, 7, 8, 10],
         instruments: ['electric_bass_finger', 'electric_bass_pick', 'synth_drum', 'taiko_drum'],
         instrumentSettings: {
-            electric_bass_finger: { volume: 60, decayTime: 0.35 },
-            electric_bass_pick: { volume: 60, decayTime: 0.35 }
+            electric_bass_finger: { volume: 60, decayTime: 0.35, transpose: -12 },
+            electric_bass_pick: { volume: 60, decayTime: 0.35, transpose: -12 }
         }
     }
 };
@@ -311,7 +311,7 @@ function playNote(instrumentIndex, midi, time, duration, velocity) {
     const wobbleVelocity = Math.round((Math.random() * 2 - 1) * HUMANIZE_VELOCITY);
 
     instruments[INSTRUMENTS[instrumentIndex].name].start({
-        note: midi,
+        note: midi + (INSTRUMENTS[instrumentIndex].transpose ?? 0),
         time: Math.max(audioContext.currentTime, time + wobbleTime),
         duration: duration,               // sounds for as long as the note is held...
         decayTime: INSTRUMENTS[instrumentIndex].decayTime ?? FADE_OUT_TIME,
