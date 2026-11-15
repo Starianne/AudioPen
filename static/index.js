@@ -1,4 +1,3 @@
-
 const video = document.getElementById('video');
 const canvas = document.getElementById('canvas');
 const photo = document.getElementById('photo');
@@ -12,12 +11,24 @@ let stream;
 let audioContext;
 let activeOscillators = [];
 
+// Holds the edge-detected image (this is what's displayed and sonified)
+const edgeCanvas = document.createElement('canvas');
+
 // MUSICAL SETTINGS
 const SCALE = [0, 2, 4, 7, 9]; // C major pentatonic
 const IMAGE_WIDTH = 32;
 const IMAGE_HEIGHT = 16;
 const NOTE_DURATION = 0.12;
 const BPM = 120;
+
+// EDGE KERNEL (Sobel, horizontal edges)
+// Responds to changes in brightness between rows, i.e. horizontal edges.
+// For vertical edges instead, swap to: [-1, 0, 1, -2, 0, 2, -1, 0, 1]
+const EDGE_KERNEL = [
+    -1, -2, -1,
+     0,  0,  0,
+     1,  2,  1
+];
 
 // Convert a scale degree into a MIDI note
 function getScaleNote(degree) {
@@ -30,6 +41,48 @@ function getScaleNote(degree) {
 // Convert MIDI note to frequency
 function midiToFrequency(midi) {
     return 440 * Math.pow(2, (midi - 69) / 12);
+}
+
+// Apply the edge kernel to the R values of an RGBA ImageData.
+// Returns a new ImageData where R = G = B = edge strength, A = 255.
+function applyEdgeKernel(imageData) {
+    const { width, height, data } = imageData;
+    const output = new ImageData(width, height);
+    const out = output.data;
+
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+
+            let sum = 0;
+
+            for (let ky = -1; ky <= 1; ky++) {
+                for (let kx = -1; kx <= 1; kx++) {
+
+                    // Clamp coordinates at the image borders
+                    const px = Math.min(width - 1, Math.max(0, x + kx));
+                    const py = Math.min(height - 1, Math.max(0, y + ky));
+
+                    // R value of RGBA array
+                    const red = data[(py * width + px) * 4];
+
+                    const weight = EDGE_KERNEL[(ky + 1) * 3 + (kx + 1)];
+
+                    sum += red * weight;
+                }
+            }
+
+            // Edge strength, clamped to 0-255
+            const edge = Math.min(255, Math.abs(sum));
+
+            const i = (y * width + x) * 4;
+            out[i] = edge;
+            out[i + 1] = edge;
+            out[i + 2] = edge;
+            out[i + 3] = 255;
+        }
+    }
+
+    return output;
 }
 
 // Turn camera on
@@ -61,12 +114,26 @@ cameraBtn.addEventListener('click', () => {
 
     context.drawImage(video, 0, 0);
 
-    photo.src = canvas.toDataURL('image/png');
+    // Build the edge image from the photograph's R values
+    const original = context.getImageData(
+        0, 0,
+        canvas.width,
+        canvas.height
+    );
+
+    const edges = applyEdgeKernel(original);
+
+    edgeCanvas.width = canvas.width;
+    edgeCanvas.height = canvas.height;
+    edgeCanvas.getContext('2d').putImageData(edges, 0, 0);
+
+    // Display the edge image instead of the original photograph
+    photo.src = edgeCanvas.toDataURL('image/png');
 
     generateBtn.disabled = false;
 });
 
-// Generate music from photograph
+// Generate music from the edge image
 generateBtn.addEventListener('click', async () => {
 
     // Stop previous composition
@@ -79,7 +146,7 @@ generateBtn.addEventListener('click', async () => {
 
     await audioContext.resume();
 
-    // Resize image to 32 x 16
+    // Resize edge image to 32 x 16
     const smallCanvas = document.createElement('canvas');
 
     smallCanvas.width = IMAGE_WIDTH;
@@ -88,7 +155,7 @@ generateBtn.addEventListener('click', async () => {
     const smallContext = smallCanvas.getContext('2d');
 
     smallContext.drawImage(
-        canvas,
+        edgeCanvas,
         0, 0,
         IMAGE_WIDTH,
         IMAGE_HEIGHT
@@ -114,21 +181,16 @@ generateBtn.addEventListener('click', async () => {
 
             const index = (y * IMAGE_WIDTH + x) * 4;
 
-            const red = pixels[index];
-            const green = pixels[index + 1];
-            const blue = pixels[index + 2];
+            // Edge image is greyscale, so R holds the edge strength
+            const edge = pixels[index];
             const alpha = pixels[index + 3];
 
             // Ignore transparent pixels
             if (alpha === 0) continue;
 
-            // Calculate brightness
-            const brightness =
-                (red * 0.299 + green * 0.587 + blue * 0.114);
-
-            // Convert brightness into a musical scale degree
-            const brightnessDegree = Math.round(
-                (brightness / 255) * 14
+            // Convert edge strength into a musical scale degree
+            const edgeDegree = Math.round(
+                (edge / 255) * 14
             );
 
             // Vertical position changes octave
@@ -137,18 +199,14 @@ generateBtn.addEventListener('click', async () => {
             );
 
             const midiNote = getScaleNote(
-                brightnessDegree + verticalDegree
+                edgeDegree + verticalDegree
             );
 
             const frequency = midiToFrequency(midiNote);
 
-            // Colour influences instrument timbre
-            const hue = Math.atan2(
-                Math.sqrt(3) * (green - blue),
-                2 * red - green - blue
-            );
-
-            const waveform = hue > 0 ? 'triangle' : 'sine';
+            // The edge image has no colour (hue is meaningless),
+            // so strong edges get a brighter timbre instead
+            const waveform = edge > 64 ? 'triangle' : 'sine';
 
             // Create oscillator
             const oscillator = audioContext.createOscillator();
