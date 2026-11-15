@@ -18,6 +18,7 @@
     <p class="intro">The audio pen is a tool that senses changes, and will produce audio outputs in response to these changes.</p>
     <div id="photobooth">
             <h3>Here's a little demo:</h3>
+        <p class="comment"> Your image will appear bellow:</p>
             <tr>
                 <div class="preview-row">
                     <div class="preview-cell">
@@ -44,7 +45,11 @@
             </button>
     </div>
     
+    <h3>Music from a picture file</h3>
     <input type="file" id="imageInput" accept="image/*">
+
+    <h3>Music from FX price data</h3>
+    <input type="file" id="fileInput" accept=".csv,.tsv,.txt">
     <input type="range" id="positionSlider" min="0" max="100" value="50">
     <button id="generateMusicBtn2" disabled>Generate music</button>
     <button id="stopMusicBtn2">Stop</button>

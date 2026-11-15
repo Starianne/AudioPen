@@ -263,6 +263,7 @@ generateBtn.addEventListener('click', async () => {
     // Stop previous composition
     stopMusic();
 
+    window.dispatchEvent(new CustomEvent('audiopen:play', { detail: 'data' }));
     // Create audio context
     if (!audioContext) {
         audioContext = new AudioContext();
@@ -327,6 +328,7 @@ function stopMusic() {
 
 stopBtn.addEventListener('click', stopMusic);
 
+window.addEventListener('audiopen:play', e => { if (e.detail !== 'data') stopMusic(); });
 // ---------------------------------------------------------------
 // VISUAL (a piano roll that lights up in sync with the audio)
 // ---------------------------------------------------------------
