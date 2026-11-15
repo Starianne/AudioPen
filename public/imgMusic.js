@@ -111,7 +111,11 @@ const SCALES = {
     drumAndBass: {
         label: 'Drum and bass',
         notes: [0, 2, 3, 5, 7, 8, 10],
-        instruments: ['synth_bass_1', 'synth_bass_2', 'synth_drum', 'taiko_drum']
+        instruments: ['electric_bass_finger', 'electric_bass_pick', 'synth_drum', 'taiko_drum'],
+        instrumentSettings: {
+            electric_bass_finger: { volume: 60, decayTime: 0.35 },
+            electric_bass_pick: { volume: 60, decayTime: 0.35 }
+        }
     }
 };
 
@@ -153,7 +157,8 @@ const HUMANIZE_VELOCITY = 6;   // random loudness wobble per note (MIDI velocity
 // would ring forever like an organ.
 const PERCUSSIVE = new Set([
     'acoustic_guitar_nylon', 'acoustic_guitar_steel', 'electric_guitar_clean',
-    'acoustic_bass', 'vibraphone', 'celesta', 'glockenspiel', 'music_box',
+    'acoustic_bass', 'electric_bass_finger', 'electric_bass_pick',
+    'vibraphone', 'celesta', 'glockenspiel', 'music_box',
     'orchestral_harp', 'koto', 'shamisen', 'synth_drum', 'taiko_drum'
 ]);
 
@@ -212,6 +217,7 @@ function applySelectedScale() {
 
     INSTRUMENTS = scale.instruments.map((name, i) => ({
         name,
+        ...(scale.instrumentSettings?.[name] ?? {}),
         colour: VOICE_COLOURS[i % VOICE_COLOURS.length]
     }));
 }
@@ -220,7 +226,7 @@ applySelectedScale();
 
 // Load the samples for a list of instruments (each is only downloaded once).
 // If one can't be loaded, the fallback instrument plays in its place.
-function createInstrument(name) {
+function createInstrument(name, { volume, decayTime = FADE_OUT_TIME } = {}) {
     // Each instrument gets its own stereo pan feeding the shared master + reverb
     if (!voiceNodes[name]) {
         const pan = audioContext.createStereoPanner();
@@ -233,16 +239,17 @@ function createInstrument(name) {
     return new Soundfont(audioContext, {
         instrument: name,
         kit: KIT,
-        decayTime: FADE_OUT_TIME,
+        volume,
+        decayTime,
         destination: voiceNodes[name],
         loadLoopData: USE_LOOP_DATA && !PERCUSSIVE.has(name)
     });
 }
 
 async function loadInstruments(list) {
-    for (const { name } of list) {
+    for (const { name, volume, decayTime } of list) {
         if (!instruments[name]) {
-            instruments[name] = createInstrument(name);
+            instruments[name] = createInstrument(name, { volume, decayTime });
         }
     }
 
@@ -307,7 +314,7 @@ function playNote(instrumentIndex, midi, time, duration, velocity) {
         note: midi,
         time: Math.max(audioContext.currentTime, time + wobbleTime),
         duration: duration,               // sounds for as long as the note is held...
-        decayTime: FADE_OUT_TIME,         // ...then fades away slowly
+        decayTime: INSTRUMENTS[instrumentIndex].decayTime ?? FADE_OUT_TIME,
         velocity: Math.max(1, Math.min(127, velocity + wobbleVelocity))
     });
 }
