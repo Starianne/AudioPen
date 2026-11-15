@@ -21,6 +21,7 @@ let noteEvents = [];   // every scheduled note, with its exact source pixel
 let startTime = 0;     // audioContext time when column 0 starts
 let overlay;           // transparent canvas drawn on top of the photo
 let animationId = null;
+let playbackGeneration = 0;
 
 // MUSICAL SETTINGS
 
@@ -28,7 +29,8 @@ let animationId = null;
 //   label       : text shown in the page
 //   notes       : semitone steps above the root note
 //   instruments : the instruments used with this scale, ordered LOW to HIGH register.
-//                 Every note in a chord gets a different one of these.
+//                 Notes are assigned by register; an instrument can play
+//                 multiple notes in the same chord.
 // The key is the <option value> used in the page.
 // Any smplr Soundfont name works. Bowed strings and winds hold long notes well;
 // percussive ones (piano, vibraphone, guitar) die away while a note is held.
@@ -127,6 +129,7 @@ const KIT = 'MusyngKite';      // smplr's higher-quality sample set ('FluidR3_GM
 const USE_LOOP_DATA = true;    // lets sustained instruments hold notes as long as needed instead of
                                // the sample simply ending (experimental in smplr; set false if you hear clicks)
 const FADE_OUT_TIME = 1.5;     // seconds an instrument takes to fade away once its edge ends (the image goes black there)
+const MASTER_VOLUME = 0.85;
 const REVERB_MIX = 0.3;        // 0 = dry, higher = more room
 const REVERB_SECONDS = 2.5;    // length of the reverb tail
 const VOICE_PANS = [-0.6, -0.2, 0.2, 0.6];  // stereo position of each voice, lowest to highest
@@ -167,12 +170,12 @@ function makeReverbImpulse(seconds) {
 function setupAudioGraph() {
     if (master) return;
 
-    // Compressor keeps four loud notes plus reverb from distorting
+    // Compressor keeps dense chords plus reverb from distorting
     const compressor = audioContext.createDynamicsCompressor();
     compressor.connect(audioContext.destination);
 
     master = audioContext.createGain();
-    master.gain.value = 0.85;
+    master.gain.value = MASTER_VOLUME;
     master.connect(compressor);
 
     const reverb = audioContext.createConvolver();
@@ -265,7 +268,6 @@ const MIN_STRENGTH = 20;        // absolute floor so camera noise stays silent
 
 // CONTINUITY SETTINGS
 const CONTINUE_CUTOFF = 0.6;    // a held note survives down to 60% of the normal cutoff
-const CONTINUE_BONUS = 1.5;     // held notes are preferred over new ones when ranking
 const COLOUR_TOLERANCE = 35;    // hue change (degrees) that counts as a "colour change"
 const NEUTRAL_SATURATION = 0.2; // below this saturation an edge counts as colourless (white)
 
@@ -580,25 +582,23 @@ function buildNotes() {
             // (same row, same colour)?
             const holding = active.find(n => n.row === row && sameColour(n.hue, hue[cell]));
 
-            // Held notes get a lower cutoff and a ranking bonus, so one weak
-            // pixel in a long edge does not chop the note into pieces.
+            // Held notes get a lower cutoff, so one weak pixel in a long edge
+            // does not chop the note into pieces.
             const needed = holding ? cutoff * CONTINUE_CUTOFF : cutoff;
 
             if (strength[cell] >= needed) {
                 candidates.push({
                     row,
                     cell,
-                    holding,
-                    rank: strength[cell] * (holding ? CONTINUE_BONUS : 1)
+                    holding
                 });
             }
         }
 
-        // Keep only the strongest few (one per instrument of the chosen scale)
-        candidates.sort((a, b) => b.rank - a.rank);
-        const chosen = candidates.slice(0, INSTRUMENTS.length);
+        // Every qualifying row contributes a note; instruments can play
+        // multiple notes at once, so do not discard edges based on voice count.
+        const chosen = candidates;
 
-        const used = new Set();      // instruments taken in THIS chord
         const nextActive = [];
 
         // 1) Notes that simply carry on keep their instrument
@@ -615,38 +615,20 @@ function buildNotes() {
                 y: (pixelY[c.cell] - y0 + 0.5) / regionHeight
             });
 
-            used.add(note.instrument);
             nextActive.push(note);
         }
 
-        // 2) New notes pick an instrument that suits their register
+        // 2) New notes pick an instrument that suits their register.
         for (const c of chosen) {
             if (c.holding) continue;
 
             // Top row = highest pitch
             const degree = ROWS - 1 - c.row;
 
-            let pick = Math.min(
+            const pick = Math.min(
                 INSTRUMENTS.length - 1,
                 Math.floor(degree * INSTRUMENTS.length / ROWS)
             );
-
-            // If another note in this chord already took it, use the nearest free one
-            if (used.has(pick)) {
-                let best = -1;
-
-                for (let k = 0; k < INSTRUMENTS.length; k++) {
-                    if (used.has(k)) continue;
-
-                    if (best === -1 || Math.abs(k - pick) < Math.abs(best - pick)) {
-                        best = k;
-                    }
-                }
-
-                pick = best;
-            }
-
-            used.add(pick);
 
             const note = {
                 row: c.row,
@@ -690,6 +672,7 @@ generateBtn.addEventListener('click', async () => {
 
     // Stop previous composition
     stopMusic();
+    const generation = playbackGeneration;
 
     // Use whichever scale (and its instruments) is selected in the page
     applySelectedScale();
@@ -702,9 +685,14 @@ generateBtn.addEventListener('click', async () => {
     setupAudioGraph();
 
     await audioContext.resume();
+    if (generation !== playbackGeneration) return;
 
     // Load the selected scale's instruments
     await loadInstruments(INSTRUMENTS);
+    if (generation !== playbackGeneration) return;
+
+    master.gain.cancelScheduledValues(audioContext.currentTime);
+    master.gain.setValueAtTime(MASTER_VOLUME, audioContext.currentTime);
 
     noteEvents = buildNotes();
 
@@ -1034,8 +1022,16 @@ function startOverlay() {
 
 // Stop playback
 function stopMusic() {
+    playbackGeneration++;
+
     Object.values(instruments).forEach(i => i.stop());
 
+    if (master && audioContext) {
+        master.gain.cancelScheduledValues(audioContext.currentTime);
+        master.gain.setValueAtTime(0, audioContext.currentTime);
+    }
+
+    noteEvents = [];
     cancelAnimationFrame(animationId);
     clearOverlay();
 }
