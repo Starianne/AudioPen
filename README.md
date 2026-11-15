@@ -1,4 +1,4 @@
-# AudioPen
+# Visual Music
 Durhack 2026 submission
 
 ## Deploying to Vercel
