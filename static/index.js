@@ -868,3 +868,42 @@ function stopMusic() {
 }
 
 stopBtn.addEventListener('click', stopMusic);
+
+const imageInput = document.getElementById("imageInput");
+
+imageInput.addEventListener("change", (event) => {
+    const file = event.target.files[0];
+
+    if (!file) return;
+
+    const img = new Image();
+
+    img.onload = () => {
+        stopMusic();
+
+        canvas.width = img.width;
+        canvas.height = img.height;
+
+        const context = canvas.getContext("2d");
+        context.drawImage(img, 0, 0);
+
+        const original = context.getImageData(
+            0,
+            0,
+            canvas.width,
+            canvas.height
+        );
+
+        const edges = applyEdgeKernel(original);
+
+        edgeCanvas.width = canvas.width;
+        edgeCanvas.height = canvas.height;
+        edgeCanvas.getContext("2d").putImageData(edges, 0, 0);
+
+        photo.src = edgeCanvas.toDataURL("image/png");
+
+        generateBtn.disabled = false;
+    };
+
+    img.src = URL.createObjectURL(file);
+});
