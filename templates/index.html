@@ -28,14 +28,19 @@
                         <img class="videoplayer" src="{{ url_for('static', filename='images/demo-photo.png') }}" id="photo" alt="Your photo will show up here" />
                     </div>
                 </div>
-                <!--<th><video class="videoplayer" id="video" autoplay playsinline></video></th>
-    <th><img class ="videoplayer" src="imgs/placeholder.svg" id="photo" alt="Your photo will show up here"/></th>-->
             <select id="scaleSelect"></select>
             </tr>
             <button id="onBtn">Camera On</button>
             <button id="cameraBtn">Take a photo!</button>
             <canvas id="canvas"></canvas>
 
+            <!-- ONE file picker: a picture (png, jpg...) or FX price data (.csv, .tsv, .txt) -->
+            <p>
+                <label for="fileInput">Or upload a picture or an FX data file:</label>
+                <input type="file" id="fileInput" accept="image/*,.csv,.tsv,.txt">
+            </p>
+
+            <!-- ONE generate button and ONE stop button for both kinds of music -->
             <button id="generateMusicBtn" disabled>
                 Generate Music 🎵
             </button>
@@ -43,18 +48,14 @@
             <button id="stopMusicBtn">
                 Stop Music ⏹
             </button>
+
+            <!-- Only shown once an FX data file has been chosen -->
+            <div id="dataControls" hidden>
+                <label for="positionSlider">Where in the file to play from:</label>
+                <input type="range" id="positionSlider" min="0" max="100" value="50">
+                <pre id="info"></pre>
+            </div>
     </div>
-    
-    <h3>Music from a picture file</h3>
-    <input type="file" id="imageInput" accept="image/*">
-
-    <h3>Music from FX price data</h3>
-    <input type="file" id="fileInput" accept=".csv,.tsv,.txt">
-    <input type="range" id="positionSlider" min="0" max="100" value="50">
-    <button id="generateMusicBtn2" disabled>Generate music</button>
-    <button id="stopMusicBtn2">Stop</button>
-    <pre id="info"></pre>
-
 
         <div class="container">
             <nav class="bottom-nav">

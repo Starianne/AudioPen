@@ -9,9 +9,17 @@ const onBtn = document.getElementById('onBtn');
 const generateBtn = document.getElementById('generateMusicBtn');
 const stopBtn = document.getElementById('stopMusicBtn');
 
+// ONE file picker for everything: pictures become image music, anything else
+// (.csv / .tsv / .txt price data) is handed to dataMusic.js.
+const fileInput = document.getElementById('fileInput');
+
 let stream;
 let audioContext;
 const instruments = {};  // smplr instruments, keyed by name (loaded on first use)
+
+// What the Generate button will play: 'image' (camera or uploaded picture)
+// or 'data' (an uploaded price file). Set by setSource() below.
+let currentSource = null;
 
 // Holds the edge-detected image (this is what's displayed and sonified)
 const edgeCanvas = document.createElement('canvas');
@@ -254,6 +262,73 @@ async function loadInstruments(list) {
     }));
 }
 
+// Everything the Generate button needs before ANY kind of music can play:
+// the chosen scale and its instruments, the audio context, the effects chain
+// and the loaded samples. Returns false if Stop was pressed while waiting.
+async function prepareAudio(generation) {
+
+    // Use whichever scale (and its instruments) is selected in the page
+    applySelectedScale();
+
+    // Create audio context
+    if (!audioContext) {
+        audioContext = new AudioContext();
+    }
+
+    setupAudioGraph();
+
+    await audioContext.resume();
+    if (generation !== playbackGeneration) return false;
+
+    // Load the selected scale's instruments
+    await loadInstruments(INSTRUMENTS);
+    if (generation !== playbackGeneration) return false;
+
+    master.gain.cancelScheduledValues(audioContext.currentTime);
+    master.gain.setValueAtTime(MASTER_VOLUME, audioContext.currentTime);
+
+    return true;
+}
+
+// Play one note on one of the selected scale's instruments.
+// (instrumentIndex is an index into INSTRUMENTS, 0 = lowest register.)
+function playNote(instrumentIndex, midi, time, duration, velocity) {
+
+    // Tiny random timing and loudness changes make it sound played, not typed
+    const wobbleTime = (Math.random() * 2 - 1) * HUMANIZE_TIME;
+    const wobbleVelocity = Math.round((Math.random() * 2 - 1) * HUMANIZE_VELOCITY);
+
+    instruments[INSTRUMENTS[instrumentIndex].name].start({
+        note: midi,
+        time: Math.max(audioContext.currentTime, time + wobbleTime),
+        duration: duration,               // sounds for as long as the note is held...
+        decayTime: FADE_OUT_TIME,         // ...then fades away slowly
+        velocity: Math.max(1, Math.min(127, velocity + wobbleVelocity))
+    });
+}
+
+// Used by dataMusic.js so the price data is played through exactly the same
+// scale, instruments and effects as the picture. Call it AFTER Generate has
+// prepared the audio.
+export function getAudio() {
+    return {
+        audioContext,
+        instruments: INSTRUMENTS,      // [{ name, colour }], low to high register
+        getScaleNote,
+        playNote,
+        generation: playbackGeneration // changes whenever Stop (or a new Generate) happens
+    };
+}
+
+// Tell the rest of the page what the Generate button will now play
+function setSource(type, file = null) {
+    currentSource = type;
+
+    window.dispatchEvent(new CustomEvent('audiopen:source', {
+        detail: { type, file }
+    }));
+}
+
 // SCAN SETTINGS
 // The image is read left to right as a scan line. Each COLUMN is one moment in
 // time; each ROW is one pitch (top of image = highest note). Where an edge
@@ -433,20 +508,11 @@ onBtn.addEventListener('click', async () => {
     }
 });
 
-// Take photograph
-cameraBtn.addEventListener('click', () => {
-    if (!video.videoWidth) return;
-
-    stopMusic();
-
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-
+// Turn a picture already drawn on the capture canvas into the edge image
+// that is displayed and sonified.
+function buildEdgeImage() {
     const context = canvas.getContext('2d');
 
-    context.drawImage(video, 0, 0);
-
-    // Build the edge image from the photograph's R values
     const original = context.getImageData(
         0, 0,
         canvas.width,
@@ -462,8 +528,23 @@ cameraBtn.addEventListener('click', () => {
     // Display the edge image instead of the original photograph
     photo.src = edgeCanvas.toDataURL('image/png');
 
-
     generateBtn.disabled = false;
+
+    setSource('image');
+}
+
+// Take photograph
+cameraBtn.addEventListener('click', () => {
+    if (!video.videoWidth) return;
+
+    stopMusic();
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+
+    canvas.getContext('2d').drawImage(video, 0, 0);
+
+    buildEdgeImage();
 });
 
 // ---------------------------------------------------------------
@@ -667,34 +748,21 @@ function buildNotes() {
     return notes;
 }
 
-// Generate music from the edge image
+// ONE Generate button for both kinds of music.
 generateBtn.addEventListener('click', async () => {
 
     // Stop previous composition
     stopMusic();
     const generation = playbackGeneration;
 
-    window.dispatchEvent(new CustomEvent('audiopen:play', { detail: 'image' }));
+    // Scale, instruments, audio chain and samples (shared by picture and data)
+    if (!(await prepareAudio(generation))) return;
 
-    // Use whichever scale (and its instruments) is selected in the page
-    applySelectedScale();
-
-    // Create audio context
-    if (!audioContext) {
-        audioContext = new AudioContext();
+    // A price file was loaded: dataMusic.js plays it through the same audio chain
+    if (currentSource === 'data') {
+        window.dispatchEvent(new CustomEvent('audiopen:generate-data'));
+        return;
     }
-
-    setupAudioGraph();
-
-    await audioContext.resume();
-    if (generation !== playbackGeneration) return;
-
-    // Load the selected scale's instruments
-    await loadInstruments(INSTRUMENTS);
-    if (generation !== playbackGeneration) return;
-
-    master.gain.cancelScheduledValues(audioContext.currentTime);
-    master.gain.setValueAtTime(MASTER_VOLUME, audioContext.currentTime);
 
     noteEvents = buildNotes();
 
@@ -712,17 +780,7 @@ generateBtn.addEventListener('click', async () => {
     // Schedule each note once, held for the whole length of its edge
     try {
         for (const note of noteEvents) {
-            // Tiny random timing and loudness changes make it sound played, not typed
-            const wobbleTime = (Math.random() * 2 - 1) * HUMANIZE_TIME;
-            const wobbleVelocity = Math.round((Math.random() * 2 - 1) * HUMANIZE_VELOCITY);
-
-            instruments[INSTRUMENTS[note.instrument].name].start({
-                note: note.midi,
-                time: Math.max(audioContext.currentTime, note.time + wobbleTime),
-                duration: note.duration,          // sounds for as long as the edge lasts...
-                decayTime: FADE_OUT_TIME,         // ...then fades away slowly
-                velocity: Math.max(1, Math.min(127, note.velocity + wobbleVelocity))
-            });
+            playNote(note.instrument, note.midi, note.time, note.duration, note.velocity);
         }
     } catch (err) {
         console.error('Audio scheduling error:', err);
@@ -1023,7 +1081,7 @@ function startOverlay() {
     animationId = requestAnimationFrame(frame);
 }
 
-// Stop playback
+// Stop playback (picture OR data: they share the same instruments)
 function stopMusic() {
     playbackGeneration++;
 
@@ -1037,21 +1095,21 @@ function stopMusic() {
     noteEvents = [];
     cancelAnimationFrame(animationId);
     clearOverlay();
+
+    // Lets dataMusic.js stop and hide its piano roll too
+    window.dispatchEvent(new CustomEvent('audiopen:stop'));
 }
 
 stopBtn.addEventListener('click', stopMusic);
 
-window.addEventListener('audiopen:play', e => { if (e.detail !== 'image') stopMusic(); });
+// ---------------------------------------------------------------
+// ONE FILE PICKER
+// ---------------------------------------------------------------
+// A picture is turned into an edge image. Anything else is treated as FX
+// price data and handed to dataMusic.js (via the 'audiopen:source' event).
 
-const imageInput = document.getElementById("imageInput");
-
-imageInput.addEventListener("change", (event) => {
-    const file = event.target.files[0];
-
-    if (!file) return;
-
-    event.target.value = '';
-
+function loadImageFile(file) {
+    const url = URL.createObjectURL(file);
     const img = new Image();
 
     img.onload = () => {
@@ -1060,26 +1118,35 @@ imageInput.addEventListener("change", (event) => {
         canvas.width = img.width;
         canvas.height = img.height;
 
-        const context = canvas.getContext("2d");
-        context.drawImage(img, 0, 0);
+        canvas.getContext('2d').drawImage(img, 0, 0);
 
-        const original = context.getImageData(
-            0,
-            0,
-            canvas.width,
-            canvas.height
-        );
+        buildEdgeImage();
 
-        const edges = applyEdgeKernel(original);
-
-        edgeCanvas.width = canvas.width;
-        edgeCanvas.height = canvas.height;
-        edgeCanvas.getContext("2d").putImageData(edges, 0, 0);
-
-        photo.src = edgeCanvas.toDataURL("image/png");
-
-        generateBtn.disabled = false;
+        URL.revokeObjectURL(url);
     };
 
-    img.src = URL.createObjectURL(file);
+    img.onerror = () => {
+        console.error('Could not read that file as a picture.');
+        URL.revokeObjectURL(url);
+    };
+
+    img.src = url;
+}
+
+fileInput.addEventListener('change', (event) => {
+    const file = event.target.files[0];
+
+    if (!file) return;
+
+    // Lets the same file be picked twice in a row
+    event.target.value = '';
+
+    stopMusic();
+
+    if (file.type.startsWith('image/')) {
+        loadImageFile(file);
+    } else {
+        setSource('data', file);
+        generateBtn.disabled = false;
+    }
 });

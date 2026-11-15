@@ -1,36 +1,20 @@
 
-import { Soundfont } from 'https://unpkg.com/smplr@0.16.4/dist/index.mjs';
+import { getAudio } from './index.js';
 
-const fileInput = document.getElementById('fileInput');
 const positionSlider = document.getElementById('positionSlider');
-const generateBtn = document.getElementById('generateMusicBtn2');
-const stopBtn = document.getElementById('stopMusicBtn2');
 const info = document.getElementById('info');
+const dataControls = document.getElementById('dataControls');   // optional wrapper
 
-let audioContext;
 let loadedFile = null;
-const instruments = {};  // smplr instruments, keyed by name (loaded on first use)
-
-// MUSICAL SETTINGS
-const SCALE = [0, 2, 4, 7, 9]; // C major pentatonic
-
-// INSTRUMENTS: one per voice of the chord, ordered LOW to HIGH register.
-// Any smplr Soundfont name works, e.g. 'viola', 'oboe', 'string_ensemble_1'.
-const INSTRUMENTS = [
-    { name: 'cello' },     // lowest notes
-    { name: 'clarinet' },
-    { name: 'violin' },
-    { name: 'flute' }      // highest notes
-];
 
 // DATA -> GRID SETTINGS
 // Each COLUMN is one price bar (one moment in time). Each ROW is one pitch:
 // the window's lowest price is the bottom row, its highest price the top row.
-const ROWS = 20;                // pitch resolution (20 pentatonic notes, ~4 octaves)
+const ROWS = 20;                // pitch resolution (20 notes of the chosen scale)
 const NUM_BARS = 128;           // how many price bars to read
 const CHUNK_BYTES = 64 * 1024;  // only read a small slice of a huge file
 const COLUMN_DURATION = 0.15;   // seconds per column
-const MIN_NOTE_DURATION = 0.4;  // shortest a note can ring (single-column notes)
+const MIN_NOTE_DURATION = 0.6;  // shortest a note can ring (single-column notes)
 const REST_GAP_SECONDS = 30;    // a gap this long in the data adds a silent column
 
 // HOW STRONGLY EACH PART OF A BAR "SOUNDS" (like edge strength in the image version)
@@ -41,18 +25,10 @@ const BODY_STRENGTH = 0.45;     // rows between the low and high
 const MIN_ACTIVITY = 0.5;       // quietest a bar gets (bars with few ticks are softer)
 
 // NOTE SELECTION (same logic as the image version)
-const MAX_NOTES_PER_COLUMN = INSTRUMENTS.length; // one note per instrument; strongest win
+const MAX_NOTES_PER_COLUMN = 4; // strongest few rows in a bar become notes
 const THRESHOLD = 0.3;          // strength needed to START a note
 const CONTINUE_CUTOFF = 0.6;    // a held note survives down to 60% of that
 const CONTINUE_BONUS = 1.5;     // held notes are preferred over new ones when ranking
-
-// Convert a scale degree into a MIDI note
-function getScaleNote(degree) {
-    const octave = Math.floor(degree / SCALE.length);
-    const note = SCALE[degree % SCALE.length];
-
-    return 48 + octave * 12 + note;
-}
 
 // ---------------------------------------------------------------
 // DATA
@@ -144,7 +120,9 @@ function buildColumns(bars) {
 // ---------------------------------------------------------------
 
 // Build the list of held notes from the columns.
-function buildNotes(columns) {
+// instrumentCount = how many instruments the selected scale uses (low to high).
+// getScaleNote    = turns a pitch row into a MIDI note in the selected scale.
+function buildNotes(columns, instrumentCount, getScaleNote) {
     const notes = [];
     let active = [];   // notes still being held from the previous column
 
@@ -171,11 +149,10 @@ function buildNotes(columns) {
             }
         }
 
-        // Keep only the strongest few (one per instrument)
+        // Keep only the strongest few
         candidates.sort((a, b) => b.rank - a.rank);
         const chosen = candidates.slice(0, MAX_NOTES_PER_COLUMN);
 
-        const used = new Set();      // instruments taken in THIS chord
         const nextActive = [];
 
         // 1) Notes that simply carry on keep their instrument
@@ -187,7 +164,6 @@ function buildNotes(columns) {
             note.endColumn = column;
             note.peak = Math.max(note.peak, strength[c.row]);
 
-            used.add(note.instrument);
             nextActive.push(note);
         }
 
@@ -198,32 +174,15 @@ function buildNotes(columns) {
             // Higher price = higher pitch
             const degree = c.row;
 
-            let pick = Math.min(
-                INSTRUMENTS.length - 1,
-                Math.floor(degree * INSTRUMENTS.length / ROWS)
+            const pick = Math.min(
+                instrumentCount - 1,
+                Math.floor(degree * instrumentCount / ROWS)
             );
-
-            // If another note in this chord already took it, use the nearest free one
-            if (used.has(pick)) {
-                let best = -1;
-
-                for (let k = 0; k < INSTRUMENTS.length; k++) {
-                    if (used.has(k)) continue;
-
-                    if (best === -1 || Math.abs(k - pick) < Math.abs(best - pick)) {
-                        best = k;
-                    }
-                }
-
-                pick = best;
-            }
-
-            used.add(pick);
 
             const note = {
                 row: c.row,
                 midi: getScaleNote(degree),
-                instrument: pick,            // index into INSTRUMENTS
+                instrument: pick,            // index into the scale's instruments
                 startColumn: column,
                 endColumn: column,
                 peak: strength[c.row]
@@ -250,85 +209,83 @@ function buildNotes(columns) {
     return notes;
 }
 
-fileInput.addEventListener('change', () => {
-    loadedFile = fileInput.files[0] || null;
-    generateBtn.disabled = !loadedFile;
-    info.textContent = loadedFile ? `Loaded ${loadedFile.name}` : '';
+// ---------------------------------------------------------------
+// EVENTS FROM index.js
+// ---------------------------------------------------------------
+
+// The file picker changed: a price file was chosen, or a picture replaced it
+window.addEventListener('audiopen:source', (event) => {
+    const { type, file } = event.detail;
+
+    if (type === 'data') {
+        loadedFile = file;
+        info.textContent = `Loaded ${file.name}`;
+
+        if (dataControls) dataControls.hidden = false;
+    } else {
+        loadedFile = null;
+        info.textContent = '';
+        hideRoll();
+
+        if (dataControls) dataControls.hidden = true;
+    }
 });
 
-// Generate music from the price data
-generateBtn.addEventListener('click', async () => {
+// Stop was pressed (or a new Generate started)
+window.addEventListener('audiopen:stop', hideRoll);
+
+// Generate was pressed while a price file is loaded. The audio is already
+// prepared (scale chosen, instruments loaded) by the time this arrives.
+window.addEventListener('audiopen:generate-data', async () => {
     if (!loadedFile) return;
 
-    // Stop previous composition
-    stopMusic();
+    const audio = getAudio();
+    const generation = audio.generation;
 
-    window.dispatchEvent(new CustomEvent('audiopen:play', { detail: 'data' }));
-    // Create audio context
-    if (!audioContext) {
-        audioContext = new AudioContext();
-    }
-
-    await audioContext.resume();
-
-    const bars = await readWindow(loadedFile, positionSlider.value / 100);
-
-    if (bars.length < 2) {
-        info.textContent = 'Not enough valid rows at this position.';
-        return;
-    }
-
-    // Load every instrument's samples (each is only loaded once)
-    for (const { name } of INSTRUMENTS) {
-        if (!instruments[name]) {
-            instruments[name] = new Soundfont(audioContext, { instrument: name });
-        }
-    }
-
-    await Promise.all(Object.values(instruments).map(i => i.load));
-
-    const { columns, shapes, minPrice, maxPrice } = buildColumns(bars);
-    const notes = buildNotes(columns);
-
-    const startTime = audioContext.currentTime + 0.1;
-
-    // Start the visual first, so it shows even if audio has a problem
-    startRoll(notes, shapes, columns.length, startTime, minPrice, maxPrice);
-
-    // Schedule each note once, held for the whole length of its run
     try {
-        for (const note of notes) {
-            instruments[INSTRUMENTS[note.instrument].name].start({
-                note: note.midi,
-                time: startTime + note.offset,
-                duration: note.duration,
-                velocity: note.velocity
-            });
+        const bars = await readWindow(loadedFile, positionSlider.value / 100);
+
+        // Stop was pressed while the file was being read
+        if (getAudio().generation !== generation) return;
+
+        if (bars.length < 2) {
+            info.textContent = 'Not enough valid rows at this position.';
+            return;
         }
+
+        const { audioContext, instruments, getScaleNote, playNote } = audio;
+
+        const { columns, shapes, minPrice, maxPrice } = buildColumns(bars);
+        const notes = buildNotes(columns, instruments.length, getScaleNote);
+
+        const startTime = audioContext.currentTime + 0.1;
+
+        // Start the visual first, so it shows even if audio has a problem
+        startRoll(notes, shapes, columns.length, startTime, minPrice, maxPrice, audioContext, instruments);
+
+        // Schedule each note once, held for the whole length of its run
+        try {
+            for (const note of notes) {
+                playNote(note.instrument, note.midi, startTime + note.offset, note.duration, note.velocity);
+            }
+        } catch (err) {
+            console.error('Audio scheduling error:', err);
+        }
+
+        const from = new Date(bars[0].t * 1000).toISOString();
+        const to = new Date(bars[bars.length - 1].t * 1000).toISOString();
+
+        info.textContent =
+            `${bars.length} bars, ${notes.length} notes, ${(columns.length * COLUMN_DURATION).toFixed(1)} s\n` +
+            `${from} to ${to}\n` +
+            `Price range ${minPrice.toFixed(4)} to ${maxPrice.toFixed(4)}`;
+
     } catch (err) {
-        console.error('Audio scheduling error:', err);
+        console.error('Data music error:', err);
+        info.textContent = 'Could not play that file. Is it a price file (utc open close high low volume)?';
     }
-
-    const from = new Date(bars[0].t * 1000).toISOString();
-    const to = new Date(bars[bars.length - 1].t * 1000).toISOString();
-
-    info.textContent =
-        `${bars.length} bars, ${notes.length} notes, ${(columns.length * COLUMN_DURATION).toFixed(1)} s\n` +
-        `${from} to ${to}\n` +
-        `Price range ${minPrice.toFixed(4)} to ${maxPrice.toFixed(4)}`;
 });
 
-// Stop playback
-function stopMusic() {
-    Object.values(instruments).forEach(i => i.stop());
-
-    cancelAnimationFrame(animationId);
-    clearRoll();
-}
-
-stopBtn.addEventListener('click', stopMusic);
-
-window.addEventListener('audiopen:play', e => { if (e.detail !== 'data') stopMusic(); });
 // ---------------------------------------------------------------
 // VISUAL (a piano roll that lights up in sync with the audio)
 // ---------------------------------------------------------------
@@ -338,14 +295,7 @@ window.addEventListener('audiopen:play', e => { if (e.detail !== 'data') stopMus
 //   white candles = the price data itself (wick = high/low, body = open/close)
 //   coloured bars = the notes, coloured by the instrument playing them
 
-const COLOURS = [
-    '255, 112, 67',   // cello
-    '255, 202, 40',   // clarinet
-    '102, 187, 106',  // violin
-    '66, 165, 245'    // flute
-];
-
-const FLASH_TIME = 0.3;     // seconds a note's highlight takes to fade out after it ends
+const FLASH_TIME = 1.5;     // seconds a note's highlight takes to fade out (matches the sound's fade)
 const MIN_CELL_WIDTH = 4;   // highlights are never drawn thinner than this many pixels
 const LABEL_WIDTH = 56;     // space on the left for the price labels
 
@@ -375,12 +325,18 @@ function getRoll() {
         info.after(roll);
     }
 
+    roll.style.setProperty('display', 'block', 'important');
+
     return roll;
 }
 
-function clearRoll() {
+// Stop animating and remove the piano roll from view
+function hideRoll() {
+    cancelAnimationFrame(animationId);
+
     if (roll) {
         roll.getContext('2d').clearRect(0, 0, roll.width, roll.height);
+        roll.style.setProperty('display', 'none', 'important');
     }
 }
 
@@ -395,7 +351,7 @@ function visibleRect(x, y, w, h) {
 }
 
 // Redraw every frame, in sync with the audio clock
-function startRoll(notes, shapes, columnCount, startTime, minPrice, maxPrice) {
+function startRoll(notes, shapes, columnCount, startTime, minPrice, maxPrice, audioContext, instruments) {
     cancelAnimationFrame(animationId);
 
     const surface = getRoll();
@@ -488,7 +444,7 @@ function startRoll(notes, shapes, columnCount, startTime, minPrice, maxPrice) {
                 const columns = note.endColumn - note.startColumn + 1;
                 const noteEnd = time + columns * COLUMN_DURATION;
 
-                const colour = COLOURS[note.instrument % COLOURS.length];
+                const colour = instruments[note.instrument].colour;
 
                 const x = plotLeft + note.startColumn * columnWidth;
                 const y = rowY(note.row);
@@ -556,22 +512,23 @@ function startRoll(notes, shapes, columnCount, startTime, minPrice, maxPrice) {
                 context.fillRect(cx - bodyWidth / 2, top, bodyWidth, bottom - top);
             });
 
-            // Legend: which colour is which instrument
+            // Legend: which colour is which instrument (highest register at top)
             context.font = '12px sans-serif';
             context.textBaseline = 'middle';
 
-            INSTRUMENTS.forEach((instr, i) => {
-                const y = plotTop + 12 + i * 18;
+            for (let row = 0; row < instruments.length; row++) {
+                const instr = instruments[instruments.length - 1 - row];
+                const y = plotTop + 12 + row * 18;
 
                 context.fillStyle = 'rgba(0, 0, 0, 0.6)';
-                context.fillRect(plotLeft + 6, y - 8, 90, 16);
+                context.fillRect(plotLeft + 6, y - 8, 110, 16);
 
-                context.fillStyle = `rgb(${COLOURS[i % COLOURS.length]})`;
+                context.fillStyle = `rgb(${instr.colour})`;
                 context.fillRect(plotLeft + 10, y - 5, 10, 10);
 
                 context.fillStyle = '#fff';
                 context.fillText(instr.name.replace(/_/g, ' '), plotLeft + 26, y);
-            });
+            }
 
         } catch (err) {
             // Never let a drawing error silently kill the animation
