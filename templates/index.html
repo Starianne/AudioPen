@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AudioPen!</title>
     <meta name="description" content="Audio">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <script type="module" src="{{ url_for('static', filename='imgMusic.js') }}" defer></script>
-    <script type="module" src="{{ url_for('static', filename='dataMusic.js') }}" defer></script>
+    <link rel="stylesheet" href="/style.css">
+    <script type="module" src="/imgMusic.js" defer></script>
+    <script type="module" src="/dataMusic.js" defer></script>
     <link rel="stylesheet" media="screen" href="https://fontlibrary.org/face/patchwork" type="text/css" />
 </head>
 <body>
@@ -25,7 +25,7 @@
                         <video class="videoplayer" id="video" autoplay playsinline></video>
                     </div>
                     <div class="preview-cell">
-                        <img class="videoplayer" src="{{ url_for('static', filename='images/demo-photo.png') }}" id="photo" alt="Your photo will show up here" />
+                        <img class="videoplayer" src="/images/demo-photo.png" id="photo" alt="Your photo will show up here" />
                     </div>
                 </div>
             <select id="scaleSelect"></select>

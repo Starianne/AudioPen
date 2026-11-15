@@ -1,5 +1,5 @@
 
-import { getAudio } from './index.js';
+import { getAudio } from './imgMusic.js';
 
 const positionSlider = document.getElementById('positionSlider');
 const info = document.getElementById('info');
