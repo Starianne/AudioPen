@@ -23,7 +23,48 @@ let overlay;           // transparent canvas drawn on top of the photo
 let animationId = null;
 
 // MUSICAL SETTINGS
-const SCALE = [0, 2, 4, 7, 9]; // C major pentatonic
+
+// SCALES (all in C). Each list is the semitone steps above the root note.
+// The key is the <option value> used in the page; label is the text shown.
+const SCALES = {
+    majorPentatonic: { label: 'Major pentatonic',  notes: [0, 2, 4, 7, 9] },
+    minorPentatonic: { label: 'Minor pentatonic',  notes: [0, 3, 5, 7, 10] },
+    major:           { label: 'Major',             notes: [0, 2, 4, 5, 7, 9, 11] },
+    naturalMinor:    { label: 'Natural minor',     notes: [0, 2, 3, 5, 7, 8, 10] },
+    harmonicMinor:   { label: 'Harmonic minor',    notes: [0, 2, 3, 5, 7, 8, 11] },
+    dorian:          { label: 'Dorian',            notes: [0, 2, 3, 5, 7, 9, 10] },
+    phrygian:        { label: 'Phrygian',          notes: [0, 1, 3, 5, 7, 8, 10] },
+    lydian:          { label: 'Lydian',            notes: [0, 2, 4, 6, 7, 9, 11] },
+    mixolydian:      { label: 'Mixolydian',        notes: [0, 2, 4, 5, 7, 9, 10] },
+    blues:           { label: 'Blues',             notes: [0, 3, 5, 6, 7, 10] },
+    wholeTone:       { label: 'Whole tone',        notes: [0, 2, 4, 6, 8, 10] },
+    hirajoshi:       { label: 'Hirajoshi (Japanese)', notes: [0, 2, 3, 7, 8] },
+    chromatic:       { label: 'Chromatic',         notes: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] }
+};
+
+const DEFAULT_SCALE = 'majorPentatonic';
+
+// The scale control in the page: <select id="scaleSelect"></select>
+// Optional. If it is missing, the default scale is used. If it is present but
+// empty, it is filled in automatically from SCALES above.
+const scaleSelect = document.getElementById('scaleSelect');
+
+if (scaleSelect && scaleSelect.options.length === 0) {
+    for (const [key, scale] of Object.entries(SCALES)) {
+        scaleSelect.add(new Option(scale.label, key));
+    }
+
+    scaleSelect.value = DEFAULT_SCALE;
+}
+
+// The notes of the scale currently in use (read from the page when Generate is pressed)
+let currentScale = SCALES[DEFAULT_SCALE].notes;
+
+function getSelectedScale() {
+    const key = scaleSelect ? scaleSelect.value : DEFAULT_SCALE;
+
+    return (SCALES[key] || SCALES[DEFAULT_SCALE]).notes;
+}
 
 // INSTRUMENTS: one per voice of the chord, ordered LOW to HIGH register.
 // Sustaining instruments (bowed strings, winds) work best because notes are
@@ -43,7 +84,7 @@ const INSTRUMENTS = [
 // continues along the same row with the same colour, ONE note is held for its
 // whole length. A new note starts when the edge changes row or colour.
 const COLUMNS = 128;            // time resolution (columns across the image)
-const ROWS = 20;                // pitch resolution (20 pentatonic notes, ~4 octaves)
+const ROWS = 20;                // pitch resolution (20 notes of the chosen scale)
 const COLUMN_DURATION = 0.15;   // seconds per column -> 128 x 0.15 = 19.2 s total
 const MIN_NOTE_DURATION = 0.4;  // shortest a note can ring (single-column notes)
 const MAX_NOTES_PER_COLUMN = INSTRUMENTS.length; // one note per instrument; strongest edges win
@@ -82,8 +123,8 @@ const BRIGHTNESS_CUTOFF = 40; // pixels dimmer than this (0-255) are set to pure
 
 // Convert a scale degree into a MIDI note
 function getScaleNote(degree) {
-    const octave = Math.floor(degree / SCALE.length);
-    const note = SCALE[degree % SCALE.length];
+    const octave = Math.floor(degree / currentScale.length);
+    const note = currentScale[degree % currentScale.length];
 
     return 48 + octave * 12 + note;
 }
@@ -477,6 +518,9 @@ generateBtn.addEventListener('click', async () => {
 
     // Stop previous composition
     stopMusic();
+
+    // Use whichever scale is selected in the page
+    currentScale = getSelectedScale();
 
     // Create audio context
     if (!audioContext) {
