@@ -992,12 +992,13 @@ function startOverlay() {
                 }
             }
 
-            // Legend: which colour is which instrument
+            // Legend follows the image's pitch order: highest register at top.
             context.font = '12px sans-serif';
             context.textBaseline = 'middle';
 
-            INSTRUMENTS.forEach((instr, i) => {
-                const y = rect.top + 14 + i * 18;
+            for (let row = 0; row < INSTRUMENTS.length; row++) {
+                const instr = INSTRUMENTS[INSTRUMENTS.length - 1 - row];
+                const y = rect.top + 14 + row * 18;
 
                 context.fillStyle = 'rgba(0, 0, 0, 0.6)';
                 context.fillRect(rect.left + 6, y - 8, 110, 16);
@@ -1007,7 +1008,7 @@ function startOverlay() {
 
                 context.fillStyle = '#fff';
                 context.fillText(instr.name.replace(/_/g, ' '), rect.left + 26, y);
-            });
+            }
 
         } catch (err) {
             // Never let a drawing error silently kill the animation
