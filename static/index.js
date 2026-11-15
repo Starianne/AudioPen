@@ -78,6 +78,7 @@ const EDGE_KERNEL_V = [
 // EDGE IMAGE TUNING
 const EDGE_GAIN = 2;     // overall brightness of edges (raise if too dark)
 const COLOUR_GAIN = 3;   // colour saturation (raise for stronger colour, 0 = white edges)
+const BRIGHTNESS_CUTOFF = 40; // pixels dimmer than this (0-255) are set to pure black (0 = keep everything)
 
 // Convert a scale degree into a MIDI note
 function getScaleNote(degree) {
@@ -176,9 +177,23 @@ function applyEdgeKernel(imageData) {
         const v = edgeToColour(vertical[o], vertical[o + 1], vertical[o + 2]);
 
         // Sum the two versions
-        out[i] = Math.min(255, h[0] + v[0]);
-        out[i + 1] = Math.min(255, h[1] + v[1]);
-        out[i + 2] = Math.min(255, h[2] + v[2]);
+        const r = Math.min(255, h[0] + v[0]);
+        const g = Math.min(255, h[1] + v[1]);
+        const b = Math.min(255, h[2] + v[2]);
+
+        // Remove faint detail: dim pixels become exactly zero (black)
+        const brightness = r * 0.299 + g * 0.587 + b * 0.114;
+
+        if (brightness < BRIGHTNESS_CUTOFF) {
+            out[i] = 0;
+            out[i + 1] = 0;
+            out[i + 2] = 0;
+        } else {
+            out[i] = r;
+            out[i + 1] = g;
+            out[i + 2] = b;
+        }
+
         out[i + 3] = 255;
     }
 
