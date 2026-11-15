@@ -1,6 +1,7 @@
 ﻿body {
     margin: 0;
     padding: 0;
+    padding-bottom: 80px;
 }
 
 canvas {
@@ -20,7 +21,6 @@ canvas {
 .container {
     display: flex;
     flex-direction: column;
-    min-height: 100vh;
 }
 
 .bottom-nav {
@@ -78,9 +78,4 @@ h3 {
     border: solid;
     background-color: #ddd;
     object-fit: cover;
-}
-
-.takenimg {
-    width: 45%;
-    aspect-ratio: 16/9;
 }
