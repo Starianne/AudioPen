@@ -1,6 +1,7 @@
 ﻿body {
     margin: 0;
     padding: 0;
+    padding-bottom: 80px;
 }
 
 canvas {
@@ -20,7 +21,6 @@ canvas {
 .container {
     display: flex;
     flex-direction: column;
-    min-height: 100vh;
 }
 
 .bottom-nav {
@@ -71,16 +71,39 @@ h2 {
 h3 {
     padding: 5px;
 }
+.preview-row {
+    display: flex;
+    gap: 1rem;
+    width: 100%;
+}
 
+.preview-cell {
+    flex: 1;
+    min-width: 0;
+}
+
+.videoplayer {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    border: solid;
+    background-color: #ddd;
+    object-fit: cover;
+}
+/*
 .videoplayer {
     width: 45%;
     aspect-ratio: 16 / 9;
     border: solid;
     background-color: #ddd;
     object-fit: cover;
+<<<<<<< HEAD
 }
+    */
 
 .takenimg {
     width: 45%;
     aspect-ratio: 16/9;
+=======
+>>>>>>> 57cc9ef275810a7f304c88fd3d689647b5f96a0e
 }
