@@ -8,6 +8,10 @@ canvas {
     display: none;
 }
 
+*{
+    font-family: 'Courier New', Courier, monospace;
+}
+
 .banner {
     background-image: linear-gradient(to right,#F06097,#F0AD60,#ADEB5B,#B9F071,#5BEBDD,#A85BEB);
     margin: 0;

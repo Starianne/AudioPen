@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AudioPen!</title>
+    <meta name="description" content="Audio">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script type="module" src="{{ url_for('static', filename='imgMusic.js') }}" defer></script>
+    <script type="module" src="{{ url_for('static', filename='dataMusic.js') }}" defer></script>
+    <link rel="stylesheet" media="screen" href="https://fontlibrary.org/face/patchwork" type="text/css" />
+</head>
+<body>
+    <div class="banner">
+        <h1>DURHACK'26: Visual Music</h1>
+    </div>
+    <h2>What Is The Visual Music?</h2>
+    <p class="intro">VM is a tool that senses changes, and will produce audio outputs in response to these changes.</p>
+    <div id="photobooth">
+            <h3>Here's a little demo:</h3>
+        <p class="comment"> Your image will appear bellow:</p>
+            <tr>
+                <div class="preview-row">
+                    <div class="preview-cell">
+                        <video class="videoplayer" id="video" autoplay playsinline></video>
+                    </div>
+                    <div class="preview-cell">
+                        <img class="videoplayer" src="{{ url_for('static', filename='images/demo-photo.png') }}" id="photo" alt="Your photo will show up here" />
+                    </div>
+                </div>
+            <select id="scaleSelect"></select>
+            </tr>
+            <button id="onBtn">Camera On</button>
+            <button id="cameraBtn">Take a photo!</button>
+            <canvas id="canvas"></canvas>
+
+            <!-- ONE file picker: a picture (png, jpg...) or FX price data (.csv, .tsv, .txt) -->
+            <p>
+                <label for="fileInput">Or upload a picture or an FX data file:</label>
+                <input type="file" id="fileInput" accept="image/*,.csv,.tsv,.txt">
+            </p>
+
+            <!-- ONE generate button and ONE stop button for both kinds of music -->
+            <button id="generateMusicBtn" disabled>
+                Generate Music 🎵
+            </button>
+
+            <button id="stopMusicBtn">
+                Stop Music ⏹
+            </button>
+
+            <!-- Only shown once an FX data file has been chosen -->
+            <div id="dataControls" hidden>
+                <label for="positionSlider">Where in the file to play from:</label>
+                <input type="range" id="positionSlider" min="0" max="100" value="50">
+                <pre id="info"></pre>
+            </div>
+    </div>
+
+        <div class="container">
+            <nav class="bottom-nav">
+                <h3 class="authref">Author References</h3>
+                <a href="https://github.com/Starianne">Starianne</a>
+                <a href="https://github.com/ACloakedFox">ACloakedFox</a>
+                <a href="https://github.com/YappaYap">YappaYap</a>
+                <a href="https://github.com/Dzsi-dzsimi">Dzsi-dzsimi</a>
+            </nav>
+        </div>
+</body>
+</html>
