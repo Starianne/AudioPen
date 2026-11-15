@@ -232,6 +232,7 @@ cameraBtn.addEventListener('click', () => {
     // Display the edge image instead of the original photograph
     photo.src = edgeCanvas.toDataURL('image/png');
 
+
     generateBtn.disabled = false;
 });
 
@@ -285,13 +286,33 @@ function buildNotes() {
     const pixelY = new Float32Array(cellCount);
     const hue = new Float32Array(cellCount).fill(-1);
 
-    for (let y = 0; y < height; y++) {
+    // Only the part of the image that is actually visible on screen is used.
+    // Anything cropped off by the CSS (e.g. object-fit: cover) makes no sound.
+    const area = getVisibleArea().region;
 
-        const row = Math.min(ROWS - 1, Math.floor(y * ROWS / height));
+    let x0 = Math.max(0, Math.round(area.x));
+    let y0 = Math.max(0, Math.round(area.y));
+    let x1 = Math.min(width, Math.round(area.x + area.width));
+    let y1 = Math.min(height, Math.round(area.y + area.height));
 
-        for (let x = 0; x < width; x++) {
+    // If the geometry can't be worked out, fall back to the whole image
+    if (!(x1 > x0) || !(y1 > y0)) {
+        x0 = 0;
+        y0 = 0;
+        x1 = width;
+        y1 = height;
+    }
 
-            const column = Math.min(COLUMNS - 1, Math.floor(x * COLUMNS / width));
+    const regionWidth = x1 - x0;
+    const regionHeight = y1 - y0;
+
+    for (let y = y0; y < y1; y++) {
+
+        const row = Math.min(ROWS - 1, Math.floor((y - y0) * ROWS / regionHeight));
+
+        for (let x = x0; x < x1; x++) {
+
+            const column = Math.min(COLUMNS - 1, Math.floor((x - x0) * COLUMNS / regionWidth));
 
             const i = (y * width + x) * 4;
 
@@ -362,8 +383,8 @@ function buildNotes() {
             note.peak = Math.max(note.peak, strength[c.cell]);
             note.points.push({
                 column,
-                x: (pixelX[c.cell] + 0.5) / width,
-                y: (pixelY[c.cell] + 0.5) / height
+                x: (pixelX[c.cell] - x0 + 0.5) / regionWidth,
+                y: (pixelY[c.cell] - y0 + 0.5) / regionHeight
             });
 
             used.add(note.instrument);
@@ -409,8 +430,8 @@ function buildNotes() {
                 peak: strength[c.cell],
                 points: [{
                     column,
-                    x: (pixelX[c.cell] + 0.5) / width,
-                    y: (pixelY[c.cell] + 0.5) / height
+                    x: (pixelX[c.cell] - x0 + 0.5) / regionWidth,
+                    y: (pixelY[c.cell] - y0 + 0.5) / regionHeight
                 }]
             };
 
@@ -490,41 +511,89 @@ generateBtn.addEventListener('click', async () => {
 // OVERLAY (shows exactly where each note comes from)
 // ---------------------------------------------------------------
 
-// Work out where the image is actually drawn on screen, allowing for
-// borders, padding and object-fit, so the overlay lines up with the pixels.
-function getImageRect() {
+// Work out which part of the image is actually VISIBLE on screen.
+//
+// The CSS (width, aspect-ratio, object-fit, object-position) decides how the
+// picture is scaled and cropped inside its box. This reproduces that, and returns:
+//   left / top / width / height : the visible area, in screen pixels
+//   region                      : the same area in IMAGE pixels
+// so the music is built only from what the user can see, and the overlay
+// lines up exactly with it.
+function getVisibleArea() {
     const box = photo.getBoundingClientRect();
     const style = getComputedStyle(photo);
 
-    const left = box.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
-    const top = box.top + parseFloat(style.borderTopWidth) + parseFloat(style.paddingTop);
-    const width = box.width
+    // Content box (inside borders and padding)
+    const boxLeft = box.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
+    const boxTop = box.top + parseFloat(style.borderTopWidth) + parseFloat(style.paddingTop);
+    const boxWidth = box.width
         - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth)
         - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
-    const height = box.height
+    const boxHeight = box.height
         - parseFloat(style.borderTopWidth) - parseFloat(style.borderBottomWidth)
         - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
 
-    const rect = { left, top, width, height };
+    // Size of the real picture, in image pixels
+    const imageWidth = edgeCanvas.width;
+    const imageHeight = edgeCanvas.height;
 
-    const fit = style.objectFit;
+    // How object-fit scales the picture (default 'fill' stretches it to the box)
+    let scaleX = boxWidth / imageWidth;
+    let scaleY = boxHeight / imageHeight;
 
-    if ((fit === 'contain' || fit === 'cover' || fit === 'scale-down') && photo.naturalWidth) {
-
-        let scale = fit === 'cover'
-            ? Math.max(width / photo.naturalWidth, height / photo.naturalHeight)
-            : Math.min(width / photo.naturalWidth, height / photo.naturalHeight);
-
-        if (fit === 'scale-down') scale = Math.min(scale, 1);
-
-        // Assumes the default object-position (centred)
-        rect.width = photo.naturalWidth * scale;
-        rect.height = photo.naturalHeight * scale;
-        rect.left = left + (width - rect.width) / 2;
-        rect.top = top + (height - rect.height) / 2;
+    switch (style.objectFit) {
+        case 'contain':
+            scaleX = scaleY = Math.min(scaleX, scaleY);
+            break;
+        case 'cover':
+            scaleX = scaleY = Math.max(scaleX, scaleY);
+            break;
+        case 'none':
+            scaleX = scaleY = 1;
+            break;
+        case 'scale-down':
+            scaleX = scaleY = Math.min(1, Math.min(scaleX, scaleY));
+            break;
     }
 
-    return rect;
+    const drawnWidth = imageWidth * scaleX;
+    const drawnHeight = imageHeight * scaleY;
+
+    // object-position decides where the picture sits when it doesn't fit exactly
+    // (default 50% 50% = centred). Values are percentages or pixels.
+    const [positionX, positionY] = style.objectPosition.split(' ');
+
+    function resolve(token, freeSpace) {
+        const value = parseFloat(token);
+
+        if (Number.isNaN(value)) return freeSpace / 2;
+
+        return token.endsWith('%') ? freeSpace * value / 100 : value;
+    }
+
+    const drawnLeft = boxLeft + resolve(positionX, boxWidth - drawnWidth);
+    const drawnTop = boxTop + resolve(positionY, boxHeight - drawnHeight);
+
+    // Visible part = where the drawn picture overlaps the box
+    const left = Math.max(boxLeft, drawnLeft);
+    const top = Math.max(boxTop, drawnTop);
+    const right = Math.min(boxLeft + boxWidth, drawnLeft + drawnWidth);
+    const bottom = Math.min(boxTop + boxHeight, drawnTop + drawnHeight);
+
+    return {
+        left,
+        top,
+        width: right - left,
+        height: bottom - top,
+
+        // The same area expressed in image pixels
+        region: {
+            x: (left - drawnLeft) / scaleX,
+            y: (top - drawnTop) / scaleY,
+            width: (right - left) / scaleX,
+            height: (bottom - top) / scaleY
+        }
+    };
 }
 
 // Transparent canvas covering the screen, drawn on top of everything.
@@ -586,6 +655,8 @@ function startOverlay() {
     const totalTime = COLUMNS * COLUMN_DURATION;
 
     function frame() {
+        context.save();
+
         try {
             // Keep the canvas sharp on high-DPI screens and after window resizes
             const ratio = window.devicePixelRatio || 1;
@@ -609,7 +680,14 @@ function startOverlay() {
                 return;
             }
 
-            const rect = getImageRect();
+            const rect = getVisibleArea();
+
+            // Only draw inside the visible image area, so nothing can spill
+            // above, below or beside the picture
+            context.beginPath();
+            context.rect(rect.left, rect.top, rect.width, rect.height);
+            context.clip();
+
             const columnWidth = rect.width / COLUMNS;
             const rowHeight = rect.height / ROWS;
 
@@ -712,6 +790,8 @@ function startOverlay() {
         } catch (err) {
             // Never let a drawing error silently kill the animation
             console.error('Overlay error:', err);
+        } finally {
+            context.restore();
         }
 
         animationId = requestAnimationFrame(frame);
